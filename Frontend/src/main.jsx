@@ -3,7 +3,6 @@ import { createRoot } from "react-dom/client"
 import {
   BrowserRouter,
   Navigate,
-  Outlet,
   Route,
   Routes
 } from "react-router-dom"
@@ -62,13 +61,31 @@ createRoot(document.getElementById("root")).render(
   <StrictMode>
     <BrowserRouter>
       <Routes>
-        <Route path="/login" element={<Login />} />
-        <Route path="/signup" element={<Signup />} />
+        <Route
+          path="/login"
+          element={<Login />}
+        />
 
-        <Route path="/" element={<AppShell />}>
+        <Route
+          path="/signup"
+          element={<Signup />}
+        />
+
+        <Route
+          path="/"
+          element={<AppShell />}
+        >
+          <Route
+            index
+            element={<Navigate to="/login" replace />}
+          />
+
           <Route path="dashboard" />
 
-          <Route path="projects" element={<Projects />} />
+          <Route
+            path="projects"
+            element={<Projects />}
+          />
 
           <Route
             path="projects/:id"
@@ -153,7 +170,7 @@ createRoot(document.getElementById("root")).render(
 
           <Route
             path="*"
-            element={<Navigate to="/dashboard" replace />}
+            element={<Navigate to="/login" replace />}
           />
         </Route>
       </Routes>
