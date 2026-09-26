@@ -45,7 +45,7 @@ function Login() {
     localStorage.setItem("bhoomiRole", role)
     localStorage.setItem("bhoomiEmail", trimmedEmail)
 
-    window.location.href = "/dashboard"
+    navigate("/dashboard")
   }
 
   return (
@@ -264,6 +264,7 @@ function Login() {
           </div>
 
           <p className="mt-5 text-center text-xs text-muted">
+            © 2026 BhoomiNetra. All rights reserved.
           </p>
         </div>
       </div>
