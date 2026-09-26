@@ -6,13 +6,31 @@ import {
   ShieldCheck
 } from "lucide-react"
 import { useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useNavigate } from "react-router-dom"
 import logo from "../assets/bhoomi-netra-logo.jpeg"
 
 function Login() {
   const [role, setRole] = useState("")
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
+  const navigate = useNavigate()
+
+  const demoAccounts = {
+    administrative: {
+      email: "admin@demo.bhoominetra.in",
+      password: "Admin@123"
+    },
+    "project-manager": {
+      email: "pm@demo.bhoominetra.in",
+      password: "Project@123"
+    }
+  }
+
+  const useDemoAccount = (demoRole) => {
+    const account = demoAccounts[demoRole]
+    setEmail(account.email)
+    setPassword(account.password)
+  }
 
   const handleLogin = () => {
     const trimmedEmail = email.trim()
@@ -163,6 +181,68 @@ function Login() {
               </button>
             </div>
 
+            <div className="mt-6">
+              <div className="mb-3 text-center">
+                <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                  Demo Access
+                </p>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <button
+                  type="button"
+                  onClick={() => useDemoAccount("administrative")}
+                  className="rounded-lg border border-border bg-page p-4 text-left transition hover:-translate-y-0.5 hover:border-saffron hover:bg-white hover:shadow-sm"
+                >
+                  <p className="text-sm font-semibold text-text">
+                    Administrative Demo
+                  </p>
+
+                  <p className="mt-3 text-xs text-muted">
+                    Email
+                  </p>
+
+                  <p className="mt-1 break-all text-xs font-medium text-text">
+                    admin@demo.bhoominetra.in
+                  </p>
+
+                  <p className="mt-2 text-xs text-muted">
+                    Password
+                  </p>
+
+                  <p className="mt-1 text-xs font-medium text-text">
+                    Admin@123
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => useDemoAccount("project-manager")}
+                  className="rounded-lg border border-border bg-page p-4 text-left transition hover:-translate-y-0.5 hover:border-saffron hover:bg-white hover:shadow-sm"
+                >
+                  <p className="text-sm font-semibold text-text">
+                    Project Manager Demo
+                  </p>
+
+                  <p className="mt-3 text-xs text-muted">
+                    Email
+                  </p>
+
+                  <p className="mt-1 break-all text-xs font-medium text-text">
+                    pm@demo.bhoominetra.in
+                  </p>
+
+                  <p className="mt-2 text-xs text-muted">
+                    Password
+                  </p>
+
+                  <p className="mt-1 text-xs font-medium text-text">
+                    Project@123
+                  </p>
+                </button>
+              </div>
+            </div>
+
             <div className="mt-6 border-t border-border pt-5 text-center">
               <p className="text-sm text-muted">
                 Don't have an account?{" "}
@@ -184,7 +264,6 @@ function Login() {
           </div>
 
           <p className="mt-5 text-center text-xs text-muted">
-            © 2026 BhoomiNetra. All CODES reserved.
           </p>
         </div>
       </div>
