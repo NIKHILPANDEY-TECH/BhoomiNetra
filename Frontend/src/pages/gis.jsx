@@ -1,405 +1,225 @@
-import {
-  Layers3,
-  Map,
-  MapPin,
-  Maximize2,
-  Search,
-  SlidersHorizontal,
-  X
-} from "lucide-react"
-import { useState } from "react"
-import { Link } from "react-router-dom"
+import { ExternalLink, MapPin, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Link } from "react-router-dom";
+import { api } from "../lib/api";
 
-function GIS() {
-  const [showFilters, setShowFilters] = useState(false)
+export default function GIS() {
+  const [items, setItems] = useState([]);
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const role = localStorage.getItem("bhoomiRole")
-  const isAdministrative = role === "administrative"
+  const load = async () => {
+    try {
+      setLoading(true);
+      setErr("");
 
-  if (!isAdministrative) {
-    return (
-      <section className="mx-auto flex min-h-[calc(100vh-132px)] max-w-[1440px] items-center justify-center px-4 py-10 sm:px-6 lg:px-10">
-        <div className="w-full max-w-lg rounded-lg border border-border bg-white p-6 text-center shadow-sm sm:p-8">
-          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full border border-border bg-page">
-            <Map
-              size={21}
-              strokeWidth={2}
-              className="text-saffron"
-              aria-hidden="true"
-            />
-          </div>
+      const response = await api.get(
+        "/api/gis/projects?min_lat=8&max_lat=37&min_lng=68&max_lng=98"
+      );
 
-          <h1 className="mt-5 text-2xl font-bold tracking-tight text-text">
-            Access Restricted
-          </h1>
+      setItems(response.data || []);
+    } catch (error) {
+      console.error("GIS loading error:", error);
+      setErr(
+        error?.response?.data?.detail ||
+          error?.message ||
+          "Failed to load GIS projects."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
 
-          <p className="mt-2 text-sm leading-6 text-muted">
-            GIS project monitoring is available only to administrative users.
-          </p>
+  useEffect(() => {
+    load();
+  }, []);
 
-          <Link
-            to="/dashboard"
-            className="mt-6 inline-flex h-11 items-center justify-center rounded-lg bg-saffron px-5 text-sm font-semibold text-white transition hover:bg-[#e88a21]"
-          >
-            Back to Dashboard
-          </Link>
-        </div>
-      </section>
-    )
-  }
+  const coordinateGroups = useMemo(() => {
+    return new Set(
+      items.map((x) =>
+        x.latitude !== undefined && x.latitude !== null
+          ? `${Math.round(Number(x.latitude) * 10) / 10}`
+          : ""
+      )
+    ).size;
+  }, [items]);
 
   return (
-    <section className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
-      <div className="mb-6 flex flex-col gap-4 lg:mb-8 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-saffron sm:text-sm">
-            Administrative Intelligence
+    <section className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-10">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-saffron">
+            Spatial Intelligence
           </p>
 
-          <h1 className="mt-2 text-3xl font-bold tracking-tight text-text sm:text-4xl">
-            GIS Map
-          </h1>
+          <h1 className="mt-2 text-3xl font-bold">GIS Map</h1>
 
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted sm:text-base">
-            View the geographic distribution of land acquisition projects and
-            monitor project risk across India.
+          <p className="mt-2 text-sm text-muted">
+            Live project coordinates from PostGIS. Open individual points in
+            OpenStreetMap.
           </p>
         </div>
 
-        <div className="inline-flex items-center gap-2 text-sm font-medium text-muted">
-          <MapPin size={17} strokeWidth={2} aria-hidden="true" />
-          <span>India</span>
-        </div>
+        <button
+          onClick={load}
+          disabled={loading}
+          className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-4 text-sm font-semibold disabled:opacity-50"
+        >
+          <RefreshCw
+            size={16}
+            className={loading ? "animate-spin" : ""}
+          />
+          {loading ? "Loading..." : "Refresh"}
+        </button>
       </div>
 
-      <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-lg border border-border bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-md">
-          <p className="text-sm font-medium text-muted">
-            Mapped Projects
-          </p>
-
-          <p className="mt-3 min-h-8 text-2xl font-bold text-text">—</p>
-
-          <p className="mt-2 text-xs leading-5 text-muted">
-            Projects with available location data
-          </p>
+      {err && (
+        <div className="mt-5 rounded-lg bg-red-50 p-4 text-sm text-red-700">
+          {err}
         </div>
+      )}
 
-        <div className="rounded-lg border border-border bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-md">
-          <p className="text-sm font-medium text-muted">
-            High Risk Locations
-          </p>
+      <div className="mt-6 grid gap-4 sm:grid-cols-3">
+        <Stat t="Mapped Projects" v={items.length} />
 
-          <p className="mt-3 min-h-8 text-2xl font-bold text-text">—</p>
+        <Stat
+          t="High Risk"
+          v={items.filter((x) => x.risk_band === "HIGH").length}
+        />
 
-          <p className="mt-2 text-xs leading-5 text-muted">
-            Geographic areas with high-risk projects
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-border bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-md">
-          <p className="text-sm font-medium text-muted">
-            States Covered
-          </p>
-
-          <p className="mt-3 min-h-8 text-2xl font-bold text-text">—</p>
-
-          <p className="mt-2 text-xs leading-5 text-muted">
-            States represented in project data
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-border bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-md">
-          <p className="text-sm font-medium text-muted">
-            Risk Coverage
-          </p>
-
-          <p className="mt-3 min-h-8 text-2xl font-bold text-text">—</p>
-
-          <p className="mt-2 text-xs leading-5 text-muted">
-            Projects with available risk predictions
-          </p>
-        </div>
+        <Stat
+          t="Coordinate Groups"
+          v={coordinateGroups}
+        />
       </div>
 
-      <div className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
-        <div className="flex flex-col gap-4 border-b border-border p-4 sm:p-5 lg:flex-row lg:items-center lg:justify-between">
-          <div className="relative w-full lg:max-w-md">
-            <Search
-              size={18}
-              strokeWidth={2}
-              aria-hidden="true"
-              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-muted"
+      <div className="mt-5 rounded-lg border border-border bg-white shadow-sm">
+        <div className="grid min-h-[520px] lg:grid-cols-[1fr_380px]">
+          <div className="relative overflow-hidden bg-[#eaf1f5] p-6">
+            <div
+              className="absolute inset-0 opacity-50"
+              style={{
+                backgroundImage:
+                  "linear-gradient(#cbd5e1 1px,transparent 1px),linear-gradient(90deg,#cbd5e1 1px,transparent 1px)",
+                backgroundSize: "42px 42px",
+              }}
             />
 
-            <input
-              type="text"
-              placeholder="Search project or location"
-              className="h-11 w-full rounded-lg border border-border bg-white pl-11 pr-4 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3 sm:flex sm:flex-wrap sm:items-center">
-            <button
-              type="button"
-              onClick={() => setShowFilters((current) => !current)}
-              className={`inline-flex h-11 items-center justify-center gap-2 rounded-lg border px-4 text-sm font-medium transition ${
-                showFilters
-                  ? "border-saffron text-saffron"
-                  : "border-border text-text hover:border-saffron hover:text-saffron"
-              }`}
-            >
-              <SlidersHorizontal
-                size={17}
-                strokeWidth={2}
-                aria-hidden="true"
-              />
-
-              Filters
-            </button>
-
-            <button
-              type="button"
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-border px-4 text-sm font-medium text-text transition hover:border-saffron hover:text-saffron"
-            >
-              <Layers3 size={17} strokeWidth={2} aria-hidden="true" />
-              Layers
-            </button>
-
-            <button
-              type="button"
-              className="col-span-2 inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-border px-4 text-sm font-medium text-text transition hover:border-saffron hover:text-saffron sm:col-span-1"
-            >
-              <Maximize2 size={17} strokeWidth={2} aria-hidden="true" />
-              Fullscreen
-            </button>
-          </div>
-        </div>
-
-        {showFilters && (
-          <div className="border-b border-border bg-page p-4 sm:p-5">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h2 className="text-sm font-semibold text-text">
-                  Map Filters
-                </h2>
-
-                <p className="mt-1 text-xs leading-5 text-muted">
-                  Refine the geographic project view.
-                </p>
-              </div>
-
-              <button
-                type="button"
-                onClick={() => setShowFilters(false)}
-                aria-label="Close filters"
-                className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-muted transition hover:bg-white hover:text-text"
-              >
-                <X size={17} strokeWidth={2} aria-hidden="true" />
-              </button>
-            </div>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <select
-                defaultValue=""
-                className="h-11 rounded-lg border border-border bg-white px-3 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-              >
-                <option value="" disabled>
-                  State
-                </option>
-
-                <option value="all">All States</option>
-              </select>
-
-              <select
-                defaultValue=""
-                className="h-11 rounded-lg border border-border bg-white px-3 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-              >
-                <option value="" disabled>
-                  Project Type
-                </option>
-
-                <option value="all">All Project Types</option>
-              </select>
-
-              <select
-                defaultValue=""
-                className="h-11 rounded-lg border border-border bg-white px-3 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-              >
-                <option value="" disabled>
-                  Risk Level
-                </option>
-
-                <option value="all">All Risk Levels</option>
-              </select>
-
-              <select
-                defaultValue=""
-                className="h-11 rounded-lg border border-border bg-white px-3 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-              >
-                <option value="" disabled>
-                  Project Status
-                </option>
-
-                <option value="all">All Statuses</option>
-              </select>
-            </div>
-          </div>
-        )}
-
-        <div className="grid lg:grid-cols-[minmax(0,1fr)_320px]">
-          <div className="relative min-h-[500px] overflow-hidden bg-page sm:min-h-[600px]">
-            <div className="absolute inset-0 bg-[linear-gradient(to_right,#D9E1E844_1px,transparent_1px),linear-gradient(to_bottom,#D9E1E844_1px,transparent_1px)] bg-[size:40px_40px]" />
-
-            <div className="absolute left-4 top-4 rounded-lg border border-border bg-white px-4 py-3 shadow-sm">
-              <div className="flex items-center gap-2">
-                <Map size={17} strokeWidth={2} className="text-saffron" />
-
-                <span className="text-sm font-semibold text-text">
-                  India Project Map
-                </span>
-              </div>
-            </div>
-
-            <div className="absolute right-4 top-4 flex flex-col overflow-hidden rounded-lg border border-border bg-white shadow-sm">
-              <button
-                type="button"
-                className="flex h-10 w-10 items-center justify-center border-b border-border text-lg font-medium text-text transition hover:bg-page hover:text-saffron"
-                aria-label="Zoom in"
-              >
-                +
-              </button>
-
-              <button
-                type="button"
-                className="flex h-10 w-10 items-center justify-center text-lg font-medium text-text transition hover:bg-page hover:text-saffron"
-                aria-label="Zoom out"
-              >
-                −
-              </button>
-            </div>
-
-            <div className="absolute inset-0 flex items-center justify-center px-6 text-center">
-              <div className="max-w-md">
-                <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full border border-border bg-white shadow-sm">
-                  <Map
-                    size={24}
-                    strokeWidth={2}
-                    className="text-saffron"
-                    aria-hidden="true"
-                  />
-                </div>
-
-                <h2 className="mt-5 text-lg font-bold text-text">
-                  GIS map data unavailable
-                </h2>
-
-                <p className="mt-2 text-sm leading-6 text-muted">
-                  Interactive project locations and risk markers will appear
-                  here when geographic project data and the map service are
-                  connected.
-                </p>
-              </div>
-            </div>
-
-            <div className="absolute bottom-4 left-4 max-w-[calc(100%-2rem)] rounded-lg border border-border bg-white p-4 shadow-sm">
-              <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                Risk Legend
-              </p>
-
-              <div className="mt-3 grid grid-cols-2 gap-x-5 gap-y-2 sm:flex sm:flex-wrap sm:gap-x-5">
-                <div className="flex items-center gap-2 text-xs text-muted">
-                  <span className="h-3 w-3 shrink-0 rounded-full border border-white bg-[#2E7D32] shadow-sm" />
-                  Low Risk
-                </div>
-
-                <div className="flex items-center gap-2 text-xs text-muted">
-                  <span className="h-3 w-3 shrink-0 rounded-full border border-white bg-[#B7791F] shadow-sm" />
-                  Medium Risk
-                </div>
-
-                <div className="flex items-center gap-2 text-xs text-muted">
-                  <span className="h-3 w-3 shrink-0 rounded-full border border-white bg-[#C66A00] shadow-sm" />
-                  High Risk
-                </div>
-
-                <div className="flex items-center gap-2 text-xs text-muted">
-                  <span className="h-3 w-3 shrink-0 rounded-full border border-white bg-[#C0392B] shadow-sm" />
-                  Critical Risk
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <aside className="border-t border-border bg-white lg:border-l lg:border-t-0">
-            <div className="border-b border-border p-5">
-              <h2 className="text-lg font-bold text-text">
-                Project Information
-              </h2>
-
-              <p className="mt-1 text-sm leading-6 text-muted">
-                Select a mapped project to view location and risk information.
-              </p>
-            </div>
-
-            <div className="p-5">
-              <div className="rounded-lg border border-dashed border-border bg-page px-4 py-10 text-center">
+            <div className="relative flex h-full min-h-[470px] items-center justify-center">
+              <div className="rounded-2xl border border-border bg-white/90 p-8 text-center shadow-sm">
                 <MapPin
-                  size={22}
-                  strokeWidth={2}
-                  className="mx-auto text-muted"
-                  aria-hidden="true"
+                  className="mx-auto text-saffron"
+                  size={32}
                 />
 
-                <p className="mt-4 text-sm font-semibold text-text">
-                  No project selected
+                <p className="mt-3 font-bold">
+                  PostGIS Project Layer
                 </p>
 
-                <p className="mt-2 text-sm leading-6 text-muted">
-                  Project details will appear here after selecting a project
-                  from the map.
+                <p className="mt-1 max-w-sm text-sm text-muted">
+                  {items.length} projects returned for the India viewport.
                 </p>
-              </div>
 
-              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                <div className="rounded-lg border border-border bg-page p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                    Project
-                  </p>
+                <div className="mt-5 flex flex-wrap justify-center gap-2">
+                  {items.slice(0, 30).map((x, i) => {
+                    const latitude = Number(x.latitude);
+                    const longitude = Number(x.longitude);
 
-                  <p className="mt-2 text-sm font-semibold text-text">—</p>
-                </div>
+                    if (
+                      !Number.isFinite(latitude) ||
+                      !Number.isFinite(longitude)
+                    ) {
+                      return null;
+                    }
 
-                <div className="rounded-lg border border-border bg-page p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                    Location
-                  </p>
-
-                  <p className="mt-2 text-sm font-semibold text-text">—</p>
-                </div>
-
-                <div className="rounded-lg border border-border bg-page p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                    Risk
-                  </p>
-
-                  <p className="mt-2 text-sm font-semibold text-text">—</p>
-                </div>
-
-                <div className="rounded-lg border border-border bg-page p-4">
-                  <p className="text-xs font-semibold uppercase tracking-wide text-muted">
-                    Delay Probability
-                  </p>
-
-                  <p className="mt-2 text-sm font-semibold text-text">—</p>
+                    return (
+                      <a
+                        key={x.project_id || i}
+                        href={`https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=14/${latitude}/${longitude}`}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="h-3 w-3 rounded-full border-2 border-white bg-saffron shadow"
+                        title={`${x.project_id || "Project"} ${
+                          x.risk_band || ""
+                        }`}
+                      />
+                    );
+                  })}
                 </div>
               </div>
             </div>
-          </aside>
+          </div>
+
+          <div className="max-h-[520px] overflow-y-auto border-t border-border lg:border-l lg:border-t-0">
+            {items.length ? (
+              items.map((x, i) => {
+                const latitude = Number(x.latitude);
+                const longitude = Number(x.longitude);
+
+                return (
+                  <div
+                    key={x.project_id || i}
+                    className="border-b border-border p-5"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <Link
+                          to={`/projects/${x.project_id}`}
+                          className="font-semibold hover:text-saffron"
+                        >
+                          {x.project_id}
+                        </Link>
+
+                        <p className="mt-1 text-xs text-muted">
+                          {Number.isFinite(latitude)
+                            ? latitude.toFixed(4)
+                            : "—"}
+                          ,{" "}
+                          {Number.isFinite(longitude)
+                            ? longitude.toFixed(4)
+                            : "—"}
+                        </p>
+                      </div>
+
+                      <span className="rounded-full bg-page px-2.5 py-1 text-xs font-semibold">
+                        {x.risk_band || "UNSCORED"}
+                      </span>
+                    </div>
+
+                    {Number.isFinite(latitude) &&
+                      Number.isFinite(longitude) && (
+                        <a
+                          href={`https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=14/${latitude}/${longitude}`}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-saffron"
+                        >
+                          Open map
+                          <ExternalLink size={14} />
+                        </a>
+                      )}
+                  </div>
+                );
+              })
+            ) : (
+              <div className="p-10 text-center text-sm text-muted">
+                {loading
+                  ? "Loading projects..."
+                  : "No projects with coordinates."}
+              </div>
+            )}
+          </div>
         </div>
       </div>
     </section>
-  )
+  );
 }
 
-export default GIS
+function Stat({ t, v }) {
+  return (
+    <div className="rounded-lg border border-border bg-white p-5 shadow-sm">
+      <p className="text-sm text-muted">{t}</p>
+      <p className="mt-2 text-2xl font-bold">{v}</p>
+    </div>
+  );
+}
