@@ -1,507 +1,150 @@
-import {
-  BarChart3,
-  CalendarDays,
-  Download,
-  FileBarChart,
-  FileText,
-  FolderOpen,
-  Search,
-  SlidersHorizontal
-} from "lucide-react"
-import { useState } from "react"
+import { Download, RefreshCw } from "lucide-react";
+import { useEffect, useState } from "react";
+import { api } from "../lib/api";
 
-function Reports() {
-  const [reportScope, setReportScope] = useState("project")
+export default function Reports() {
+  const [d, setD] = useState(null);
+  const [err, setErr] = useState("");
+  const [loading, setLoading] = useState(false);
 
-  const role = localStorage.getItem("bhoomiRole")
-  const isProjectManager = role === "project-manager"
+  const load = async () => {
+    try {
+      setLoading(true);
+      setErr("");
+
+      const response = await api.get("/api/reports/overview");
+
+      setD(response.data);
+    } catch (error) {
+      console.error("Reports loading error:", error);
+
+      setErr(
+        error?.response?.data?.detail ||
+          error?.message ||
+          "Failed to load report data."
+      );
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    load();
+  }, []);
+
+  const exportJson = () => {
+    if (!d) return;
+
+    const blob = new Blob(
+      [JSON.stringify(d, null, 2)],
+      { type: "application/json" }
+    );
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+
+    a.href = url;
+    a.download = "bhoominetra-report.json";
+
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    URL.revokeObjectURL(url);
+  };
+
+  const averageRisk =
+    typeof d?.average_risk === "number"
+      ? `${(d.average_risk * 100).toFixed(1)}%`
+      : null;
+
+  const averageDelay =
+    typeof d?.average_predicted_delay === "number"
+      ? `${d.average_predicted_delay.toFixed(1)} days`
+      : null;
+
+  const cards = [
+    ["Total Projects", d?.total_projects],
+    ["Active Projects", d?.active_projects],
+    ["High Risk", d?.high_risk],
+    ["Medium Risk", d?.medium_risk],
+    ["Low Risk", d?.low_risk],
+    ["Average Risk", averageRisk],
+    ["Avg Predicted Delay", averageDelay],
+    ["Bottlenecks", d?.bottlenecks],
+  ];
 
   return (
-    <section className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
-      <div className="mb-6 flex flex-col gap-4 lg:mb-8 lg:flex-row lg:items-end lg:justify-between">
-        <div className="min-w-0">
-          <p className="text-xs font-semibold uppercase tracking-wide text-saffron sm:text-sm">
-            {isProjectManager
-              ? "Project Reporting"
-              : "Administrative Reporting"}
+    <section className="mx-auto max-w-[1200px] px-4 py-6 sm:px-6 lg:px-10">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-saffron">
+            Management Reporting
           </p>
 
-          <h1 className="mt-2 text-3xl font-bold tracking-tight text-text sm:text-4xl">
+          <h1 className="mt-2 text-3xl font-bold">
             Reports
           </h1>
 
-          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted sm:text-base">
-            {isProjectManager
-              ? "Generate reports for your assigned projects, risk, delay, stage prediction, and recommendations."
-              : "Generate project, risk, delay, and administrative reports from the BhoomiNETRA platform."}
+          <p className="mt-2 text-sm text-muted">
+            Live aggregate metrics from the backend.
           </p>
         </div>
 
-        <div className="inline-flex items-center gap-2 text-sm font-medium text-muted">
-          <FileBarChart size={18} strokeWidth={2} aria-hidden="true" />
-          <span>{isProjectManager ? "Project Reports" : "Report Centre"}</span>
+        <div className="flex gap-2">
+          <button
+            onClick={load}
+            disabled={loading}
+            className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-4 text-sm font-semibold disabled:opacity-50"
+          >
+            <RefreshCw
+              size={16}
+              className={loading ? "animate-spin" : ""}
+            />
+
+            {loading ? "Loading..." : "Refresh"}
+          </button>
+
+          <button
+            onClick={exportJson}
+            disabled={!d}
+            className="inline-flex h-10 items-center gap-2 rounded-lg bg-saffron px-4 text-sm font-semibold text-white disabled:opacity-50"
+          >
+            <Download size={16} />
+            Export
+          </button>
         </div>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        <div className="rounded-lg border border-border bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-md">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium text-muted">
-              Available Reports
+      {err && (
+        <div className="mt-5 rounded-lg bg-red-50 p-4 text-sm text-red-700">
+          {err}
+        </div>
+      )}
+
+      <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        {cards.map(([key, value]) => (
+          <div
+            key={key}
+            className="rounded-lg border border-border bg-white p-5 shadow-sm"
+          >
+            <p className="text-sm text-muted">
+              {key}
             </p>
 
-            <FileText
-              size={19}
-              strokeWidth={2}
-              className="shrink-0 text-saffron"
-              aria-hidden="true"
-            />
-          </div>
-
-          <p className="mt-3 min-h-8 text-2xl font-bold text-text">—</p>
-
-          <p className="mt-2 text-xs leading-5 text-muted">
-            Report types available for generation
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-border bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-md">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium text-muted">
-              Generated Reports
+            <p className="mt-2 text-2xl font-bold">
+              {value ?? "—"}
             </p>
-
-            <Download
-              size={19}
-              strokeWidth={2}
-              className="shrink-0 text-saffron"
-              aria-hidden="true"
-            />
           </div>
-
-          <p className="mt-3 min-h-8 text-2xl font-bold text-text">—</p>
-
-          <p className="mt-2 text-xs leading-5 text-muted">
-            Reports generated by the current user
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-border bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-md">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium text-muted">
-              Project Reports
-            </p>
-
-            <FolderOpen
-              size={19}
-              strokeWidth={2}
-              className="shrink-0 text-saffron"
-              aria-hidden="true"
-            />
-          </div>
-
-          <p className="mt-3 min-h-8 text-2xl font-bold text-text">—</p>
-
-          <p className="mt-2 text-xs leading-5 text-muted">
-            {isProjectManager
-              ? "Reports for assigned projects"
-              : "Project-specific reports available"}
-          </p>
-        </div>
-
-        <div className="rounded-lg border border-border bg-white p-5 shadow-sm transition duration-200 hover:-translate-y-1 hover:shadow-md">
-          <div className="flex items-center justify-between gap-3">
-            <p className="text-sm font-medium text-muted">
-              Risk Reports
-            </p>
-
-            <BarChart3
-              size={19}
-              strokeWidth={2}
-              className="shrink-0 text-saffron"
-              aria-hidden="true"
-            />
-          </div>
-
-          <p className="mt-3 min-h-8 text-2xl font-bold text-text">—</p>
-
-          <p className="mt-2 text-xs leading-5 text-muted">
-            Risk and delay analysis reports
-          </p>
-        </div>
+        ))}
       </div>
 
-      <div className="mt-5 rounded-lg border border-border bg-white p-5 shadow-sm sm:p-6">
-        <div className="flex items-start gap-3">
-          <SlidersHorizontal
-            size={21}
-            strokeWidth={2}
-            className="mt-0.5 shrink-0 text-saffron"
-            aria-hidden="true"
-          />
-
-          <div>
-            <h2 className="text-lg font-bold text-text">
-              Generate Report
-            </h2>
-
-            <p className="mt-1 text-sm leading-6 text-muted">
-              {isProjectManager
-                ? "Select the project and information required for your report."
-                : "Select the scope and information required for your report."}
-            </p>
-          </div>
-        </div>
-
-        <div className="mt-6 space-y-6">
-          <div>
-            <p className="text-sm font-semibold text-text">
-              Report Scope
-            </p>
-
-            <div
-              className={`mt-3 grid gap-3 ${
-                isProjectManager ? "sm:grid-cols-1" : "sm:grid-cols-2"
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => setReportScope("project")}
-                className={`rounded-lg border p-4 text-left transition ${
-                  reportScope === "project"
-                    ? "border-saffron bg-page"
-                    : "border-border hover:border-saffron"
-                }`}
-              >
-                <p className="text-sm font-semibold text-text">
-                  {isProjectManager
-                    ? "My Project Report"
-                    : "Project Report"}
-                </p>
-
-                <p className="mt-1 text-xs leading-5 text-muted">
-                  {isProjectManager
-                    ? "Generate a detailed report for one of your assigned projects."
-                    : "Generate a detailed report for a selected project."}
-                </p>
-              </button>
-
-              {!isProjectManager && (
-                <button
-                  type="button"
-                  onClick={() => setReportScope("regional")}
-                  className={`rounded-lg border p-4 text-left transition ${
-                    reportScope === "regional"
-                      ? "border-saffron bg-page"
-                      : "border-border hover:border-saffron"
-                  }`}
-                >
-                  <p className="text-sm font-semibold text-text">
-                    Regional Report
-                  </p>
-
-                  <p className="mt-1 text-xs leading-5 text-muted">
-                    Generate a report across selected states or districts.
-                  </p>
-                </button>
-              )}
-            </div>
-          </div>
-
-          <div className="grid gap-5 lg:grid-cols-2">
-            <div>
-              <label
-                htmlFor="reportType"
-                className="text-sm font-semibold text-text"
-              >
-                Report Type
-              </label>
-
-              <select
-                id="reportType"
-                defaultValue=""
-                className="mt-2 h-11 w-full rounded-lg border border-border bg-white px-3 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-              >
-                <option value="" disabled>
-                  Select report type
-                </option>
-
-                <option value="project-overview">
-                  Project Overview
-                </option>
-
-                <option value="risk-analysis">
-                  Risk Analysis
-                </option>
-
-                <option value="delay-analysis">
-                  Delay Analysis
-                </option>
-
-                <option value="stage-prediction">
-                  Stage Prediction
-                </option>
-
-                <option value="recommendations">
-                  Recommendations
-                </option>
-
-                <option value="comprehensive">
-                  Comprehensive Project Report
-                </option>
-              </select>
-            </div>
-
-            <div>
-              <label
-                htmlFor="reportFormat"
-                className="text-sm font-semibold text-text"
-              >
-                Report Format
-              </label>
-
-              <select
-                id="reportFormat"
-                defaultValue=""
-                className="mt-2 h-11 w-full rounded-lg border border-border bg-white px-3 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-              >
-                <option value="" disabled>
-                  Select format
-                </option>
-
-                <option value="pdf">PDF</option>
-                <option value="excel">Excel</option>
-              </select>
-            </div>
-          </div>
-
-          {reportScope === "project" ? (
-            <div>
-              <label
-                htmlFor="projectSearch"
-                className="text-sm font-semibold text-text"
-              >
-                {isProjectManager
-                  ? "Select My Project"
-                  : "Select Project"}
-              </label>
-
-              <div className="relative mt-2">
-                <Search
-                  size={18}
-                  strokeWidth={2}
-                  className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-muted"
-                  aria-hidden="true"
-                />
-
-                <input
-                  id="projectSearch"
-                  type="text"
-                  placeholder={
-                    isProjectManager
-                      ? "Search my project name or project ID"
-                      : "Search project name or project ID"
-                  }
-                  className="h-11 w-full rounded-lg border border-border bg-white pl-11 pr-4 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-                />
-              </div>
-
-              <p className="mt-2 text-xs leading-5 text-muted">
-                {isProjectManager
-                  ? "Live project search will use assigned project data."
-                  : "Live project search will use connected project data."}
-              </p>
-            </div>
-          ) : (
-            <div className="grid gap-5 sm:grid-cols-2">
-              <div>
-                <label
-                  htmlFor="state"
-                  className="text-sm font-semibold text-text"
-                >
-                  State
-                </label>
-
-                <select
-                  id="state"
-                  defaultValue=""
-                  className="mt-2 h-11 w-full rounded-lg border border-border bg-white px-3 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-                >
-                  <option value="" disabled>
-                    Select state
-                  </option>
-
-                  <option value="all">All States</option>
-                </select>
-              </div>
-
-              <div>
-                <label
-                  htmlFor="district"
-                  className="text-sm font-semibold text-text"
-                >
-                  District
-                </label>
-
-                <select
-                  id="district"
-                  defaultValue=""
-                  className="mt-2 h-11 w-full rounded-lg border border-border bg-white px-3 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-                >
-                  <option value="" disabled>
-                    Select district
-                  </option>
-
-                  <option value="all">All Districts</option>
-                </select>
-              </div>
-            </div>
-          )}
-
-          <div className="grid gap-5 sm:grid-cols-2">
-            <div>
-              <label
-                htmlFor="fromDate"
-                className="text-sm font-semibold text-text"
-              >
-                From Date
-              </label>
-
-              <div className="relative mt-2">
-                <CalendarDays
-                  size={17}
-                  strokeWidth={2}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
-                  aria-hidden="true"
-                />
-
-                <input
-                  id="fromDate"
-                  type="date"
-                  className="h-11 w-full rounded-lg border border-border bg-white pl-10 pr-3 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label
-                htmlFor="toDate"
-                className="text-sm font-semibold text-text"
-              >
-                To Date
-              </label>
-
-              <div className="relative mt-2">
-                <CalendarDays
-                  size={17}
-                  strokeWidth={2}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
-                  aria-hidden="true"
-                />
-
-                <input
-                  id="toDate"
-                  type="date"
-                  className="h-11 w-full rounded-lg border border-border bg-white pl-10 pr-3 text-sm text-text outline-none transition focus:border-saffron focus:ring-1 focus:ring-saffron/20"
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="flex flex-col gap-3 border-t border-border pt-5 sm:flex-row sm:justify-end">
-            <button
-              type="button"
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-border px-5 text-sm font-medium text-text transition hover:border-saffron hover:text-saffron"
-            >
-              Reset
-            </button>
-
-            <button
-              type="button"
-              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg bg-saffron px-5 text-sm font-semibold text-white transition hover:bg-[#e88a21]"
-            >
-              <FileBarChart
-                size={17}
-                strokeWidth={2}
-                aria-hidden="true"
-              />
-              Generate Report
-            </button>
-          </div>
-        </div>
-      </div>
-
-      <div className="mt-5 rounded-lg border border-border bg-white p-5 shadow-sm sm:p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <FileText
-              size={21}
-              strokeWidth={2}
-              className="mt-0.5 shrink-0 text-saffron"
-              aria-hidden="true"
-            />
-
-            <div>
-              <h2 className="text-lg font-bold text-text">
-                Generated Reports
-              </h2>
-
-              <p className="mt-1 text-sm leading-6 text-muted">
-                Previously generated reports will appear here.
-              </p>
-            </div>
-          </div>
-
-          <span className="shrink-0 text-sm font-medium text-muted">
-            — Reports
-          </span>
-        </div>
-
-        <div className="mt-6 overflow-x-auto rounded-lg border border-border">
-          <table className="min-w-[760px] w-full">
-            <thead className="border-b border-border bg-page">
-              <tr>
-                <th className="px-5 py-4 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                  Report
-                </th>
-
-                <th className="px-5 py-4 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                  Scope
-                </th>
-
-                <th className="px-5 py-4 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                  Generated On
-                </th>
-
-                <th className="px-5 py-4 text-left text-xs font-semibold uppercase tracking-wide text-muted">
-                  Format
-                </th>
-
-                <th className="px-5 py-4 text-right text-xs font-semibold uppercase tracking-wide text-muted">
-                  Action
-                </th>
-              </tr>
-            </thead>
-
-            <tbody>
-              <tr>
-                <td colSpan="5" className="px-5 py-14 text-center">
-                  <p className="text-sm font-semibold text-text">
-                    No generated reports available
-                  </p>
-
-                  <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-muted">
-                    Generated reports will appear here after the report service
-                    is connected.
-                  </p>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
+      {d?.generated_at && (
+        <p className="mt-5 text-xs text-muted">
+          Generated at{" "}
+          {new Date(d.generated_at).toLocaleString()}
+        </p>
+      )}
     </section>
-  )
+  );
 }
-
-export default Reports
