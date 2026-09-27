@@ -1,0 +1,27 @@
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS / IDE
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Temporary files
+*.log
+*.tmp
+
+# Optional local caches
+.cache/
+
+# Keep trained artifacts only if they are intentionally part of the SIH demo release.
+# For a production deployment, store model binaries in an artifact/model registry instead.
