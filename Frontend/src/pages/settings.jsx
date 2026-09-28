@@ -11,7 +11,6 @@ import {
   X
 } from "lucide-react"
 import { useRef, useState } from "react"
-import { api, clearSession } from "../lib/api";
 import { useNavigate } from "react-router-dom"
 
 function Settings() {
@@ -64,17 +63,11 @@ function Settings() {
     }, 2500)
   }
 
-const handleLogout = async () => {
-  try {
-    await api.post("/api/auth/logout", {});
-  } catch {
-    // Continue local logout even if backend is unavailable.
+  const handleLogout = () => {
+    localStorage.removeItem("bhoomiRole")
+    localStorage.removeItem("bhoomiEmail")
+    navigate("/login", { replace: true })
   }
-
-  clearSession();
-
-  navigate("/login", { replace: true });
-};
 
   return (
     <section className="mx-auto max-w-[1200px] px-4 py-6 sm:px-6 sm:py-8 lg:px-10 lg:py-10">
