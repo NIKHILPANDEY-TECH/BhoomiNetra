@@ -1,225 +1,969 @@
-import { ExternalLink, MapPin, RefreshCw } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
-import { Link } from "react-router-dom";
-import { api } from "../lib/api";
+import {
+  Layers3,
+  Map as MapIcon,
+  MapPin,
+  Maximize2,
+  RefreshCw,
+  Search,
+  SlidersHorizontal,
+  X,
+} from "lucide-react"
+
+import { useEffect, useMemo, useRef, useState } from "react"
+import { Link } from "react-router-dom"
+import { api } from "../lib/api"
+
+const CENTER = [22.5, 79]
+
+const RISK_COLORS = {
+  LOW: "#2E7D32",
+  MEDIUM: "#B7791F",
+  HIGH: "#C66A00",
+  CRITICAL: "#C0392B",
+  UNSCORED: "#64748B",
+}
+
+let leafletPromise
+
+function loadLeaflet() {
+  if (window.L) return Promise.resolve(window.L)
+
+  if (leafletPromise) return leafletPromise
+
+  leafletPromise = new Promise((resolve, reject) => {
+    if (!document.getElementById("bhoomi-leaflet-css")) {
+      const css = document.createElement("link")
+
+      css.id = "bhoomi-leaflet-css"
+      css.rel = "stylesheet"
+      css.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+
+      document.head.appendChild(css)
+    }
+
+    const existing = document.querySelector(
+      'script[data-bhoomi-leaflet="true"]'
+    )
+
+    if (existing) {
+      existing.addEventListener("load", () => {
+        if (window.L) {
+          resolve(window.L)
+        } else {
+          reject(new Error("Leaflet unavailable"))
+        }
+      })
+
+      existing.addEventListener("error", reject)
+
+      return
+    }
+
+    const script = document.createElement("script")
+
+    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    script.async = true
+    script.dataset.bhoomiLeaflet = "true"
+
+    script.onload = () => {
+      if (window.L) {
+        resolve(window.L)
+      } else {
+        reject(new Error("Leaflet unavailable"))
+      }
+    }
+
+    script.onerror = () => {
+      reject(new Error("Unable to load Leaflet"))
+    }
+
+    document.head.appendChild(script)
+  })
+
+  return leafletPromise
+}
+
+function normalize(response) {
+  const payload = response?.data ?? response
+
+  const data = Array.isArray(payload)
+    ? payload
+    : Array.isArray(payload?.data)
+      ? payload.data
+      : []
+
+  return data
+    .map((x) => ({
+      ...x,
+      latitude: Number(x.latitude),
+      longitude: Number(x.longitude),
+      risk: x.risk == null ? null : Number(x.risk),
+      risk_band: String(x.risk_band || "UNSCORED").toUpperCase(),
+    }))
+    .filter(
+      (x) =>
+        Number.isFinite(x.latitude) &&
+        Number.isFinite(x.longitude)
+    )
+}
 
 export default function GIS() {
-  const [items, setItems] = useState([]);
-  const [err, setErr] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [items, setItems] = useState([])
+  const [selected, setSelected] = useState(null)
+
+  const [search, setSearch] = useState("")
+  const [riskFilter, setRiskFilter] = useState("ALL")
+
+  const [showFilters, setShowFilters] = useState(false)
+  const [showMarkers, setShowMarkers] = useState(true)
+
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState("")
+
+  // IMPORTANT:
+  // This state fixes the Leaflet/data loading race condition.
+  const [mapReady, setMapReady] = useState(false)
+
+  const mapRef = useRef(null)
+  const mapNode = useRef(null)
+  const layerRef = useRef(null)
+
+  const role = localStorage.getItem("bhoomiRole")
+
+  const administrative = [
+    "administrative",
+    "national_admin",
+    "state_officer",
+    "district_officer",
+  ].includes(role)
+
+  // ---------------------------------------------------------
+  // LOAD GIS DATA
+  // ---------------------------------------------------------
 
   const load = async () => {
     try {
-      setLoading(true);
-      setErr("");
+      setLoading(true)
+      setError("")
 
       const response = await api.get(
         "/api/gis/projects?min_lat=8&max_lat=37&min_lng=68&max_lng=98"
-      );
+      )
 
-      setItems(response.data || []);
-    } catch (error) {
-      console.error("GIS loading error:", error);
-      setErr(
-        error?.response?.data?.detail ||
-          error?.message ||
+      const data = normalize(response)
+
+      console.log("GIS API response:", response)
+      console.log("GIS projects:", data.length)
+      console.log("GIS data:", data)
+
+      setItems(data)
+
+      if (selected) {
+        setSelected(
+          data.find(
+            (x) => x.project_id === selected.project_id
+          ) || null
+        )
+      }
+    } catch (err) {
+      console.error("GIS loading error:", err)
+
+      setError(
+        err?.response?.data?.detail ||
+          err?.message ||
           "Failed to load GIS projects."
-      );
+      )
+
+      setItems([])
+      setSelected(null)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   useEffect(() => {
-    load();
-  }, []);
+    if (administrative) {
+      load()
+    }
+  }, [administrative])
 
-  const coordinateGroups = useMemo(() => {
-    return new Set(
-      items.map((x) =>
-        x.latitude !== undefined && x.latitude !== null
-          ? `${Math.round(Number(x.latitude) * 10) / 10}`
-          : ""
+  // ---------------------------------------------------------
+  // INITIALIZE LEAFLET
+  // ---------------------------------------------------------
+
+  useEffect(() => {
+    if (!administrative || !mapNode.current) {
+      return
+    }
+
+    let cancelled = false
+
+    loadLeaflet()
+      .then((L) => {
+        if (cancelled) {
+          return
+        }
+
+        if (mapRef.current) {
+          return
+        }
+
+        const map = L.map(mapNode.current, {
+          center: CENTER,
+          zoom: 5,
+          zoomControl: false,
+          minZoom: 4,
+          maxZoom: 18,
+        })
+
+        L.tileLayer(
+          "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
+          {
+            maxZoom: 19,
+            attribution:
+              '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>',
+          }
+        ).addTo(map)
+
+        const layer = L.layerGroup().addTo(map)
+
+        mapRef.current = map
+        layerRef.current = layer
+
+        // IMPORTANT:
+        // Tell React that Leaflet is now ready.
+        setMapReady(true)
+
+        setTimeout(() => {
+          map.invalidateSize()
+        }, 100)
+      })
+      .catch((err) => {
+        console.error("Leaflet error:", err)
+
+        setError(
+          "Map service could not be loaded. Check internet access and refresh."
+        )
+      })
+
+    return () => {
+      cancelled = true
+
+      if (mapRef.current) {
+        mapRef.current.remove()
+        mapRef.current = null
+      }
+
+      layerRef.current = null
+      setMapReady(false)
+    }
+  }, [administrative])
+
+  // ---------------------------------------------------------
+  // FILTER PROJECTS
+  // ---------------------------------------------------------
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase()
+
+    return items.filter((x) => {
+      const riskOk =
+        riskFilter === "ALL" ||
+        x.risk_band === riskFilter
+
+      const hay = [
+        x.project_id,
+        x.project_name,
+        x.state,
+        x.district,
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+
+      return riskOk && (!q || hay.includes(q))
+    })
+  }, [items, search, riskFilter])
+
+  // ---------------------------------------------------------
+  // RENDER MAP MARKERS
+  //
+  // mapReady is deliberately included in dependencies.
+  // This fixes the race between API loading and Leaflet loading.
+  // ---------------------------------------------------------
+
+  useEffect(() => {
+    const L = window.L
+    const map = mapRef.current
+    const layer = layerRef.current
+
+    if (!mapReady || !L || !map || !layer) {
+      return
+    }
+
+    layer.clearLayers()
+
+    if (!showMarkers) {
+      return
+    }
+
+    console.log(
+      "Rendering GIS markers:",
+      filtered.length
+    )
+
+    filtered.forEach((item) => {
+      const color =
+        RISK_COLORS[item.risk_band] ||
+        RISK_COLORS.UNSCORED
+
+      const selectedMarker =
+        selected?.project_id === item.project_id
+
+      const size = selectedMarker ? 22 : 16
+      const anchor = selectedMarker ? 11 : 8
+
+      const icon = L.divIcon({
+        className: "bhoomi-marker",
+
+        html: `
+          <span
+            style="
+              display:block;
+              width:${size}px;
+              height:${size}px;
+              border-radius:50%;
+              background:${color};
+              border:3px solid white;
+              box-shadow:0 2px 8px rgba(15,23,42,.4);
+            "
+          ></span>
+        `,
+
+        iconSize: [size, size],
+        iconAnchor: [anchor, anchor],
+      })
+
+      const marker = L.marker(
+        [item.latitude, item.longitude],
+        { icon }
       )
-    ).size;
-  }, [items]);
 
-  return (
-    <section className="mx-auto max-w-[1400px] px-4 py-6 sm:px-6 lg:px-10">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-saffron">
-            Spatial Intelligence
-          </p>
+      marker.bindPopup(`
+        <strong>${item.project_id || "Project"}</strong>
+        <br/>
+        Risk: ${item.risk_band}
+        <br/>
+        ${item.latitude.toFixed(4)},
+        ${item.longitude.toFixed(4)}
+      `)
 
-          <h1 className="mt-2 text-3xl font-bold">GIS Map</h1>
+      marker.on("click", () => {
+        setSelected(item)
+
+        map.setView(
+          [item.latitude, item.longitude],
+          Math.max(map.getZoom(), 10)
+        )
+      })
+
+      marker.addTo(layer)
+    })
+  }, [
+    filtered,
+    selected,
+    showMarkers,
+    mapReady,
+  ])
+
+  // ---------------------------------------------------------
+  // STATISTICS
+  // ---------------------------------------------------------
+
+  const highRisk = items.filter(
+    (x) =>
+      x.risk_band === "HIGH" ||
+      x.risk_band === "CRITICAL"
+  ).length
+
+  const riskCoverage = items.filter(
+    (x) =>
+      x.risk !== null &&
+      Number.isFinite(x.risk)
+  ).length
+
+  // ---------------------------------------------------------
+  // ACCESS CONTROL
+  // ---------------------------------------------------------
+
+  if (!administrative) {
+    return (
+      <section className="mx-auto flex min-h-[calc(100vh-132px)] max-w-[1440px] items-center justify-center px-4 py-10">
+        <div className="w-full max-w-lg rounded-lg border border-border bg-white p-8 text-center shadow-sm">
+          <MapIcon
+            size={28}
+            className="mx-auto text-saffron"
+          />
+
+          <h1 className="mt-5 text-2xl font-bold text-text">
+            Access Restricted
+          </h1>
 
           <p className="mt-2 text-sm text-muted">
-            Live project coordinates from PostGIS. Open individual points in
-            OpenStreetMap.
+            GIS project monitoring is available only
+            to administrative users.
+          </p>
+
+          <Link
+            to="/dashboard"
+            className="mt-6 inline-flex h-11 items-center rounded-lg bg-saffron px-5 text-sm font-semibold text-white"
+          >
+            Back to Dashboard
+          </Link>
+        </div>
+      </section>
+    )
+  }
+
+  // ---------------------------------------------------------
+  // MAP CONTROLS
+  // ---------------------------------------------------------
+
+  const zoom = (n) => {
+    if (!mapRef.current) return
+
+    mapRef.current.setZoom(
+      mapRef.current.getZoom() + n
+    )
+  }
+
+  const reset = () => {
+    mapRef.current?.setView(CENTER, 5)
+  }
+
+  const fullscreen = () => {
+    mapNode.current?.parentElement?.requestFullscreen?.()
+  }
+
+  // ---------------------------------------------------------
+  // UI
+  // ---------------------------------------------------------
+
+  return (
+    <section className="mx-auto max-w-[1440px] px-4 py-6 sm:px-6 lg:px-10">
+
+      {/* HEADER */}
+
+      <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-saffron">
+            Administrative Intelligence
+          </p>
+
+          <h1 className="mt-2 text-3xl font-bold tracking-tight text-text sm:text-4xl">
+            GIS Map
+          </h1>
+
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-muted sm:text-base">
+            Live PostGIS project locations with
+            OpenStreetMap tiles and model risk markers
+            across India.
           </p>
         </div>
 
         <button
           onClick={load}
           disabled={loading}
-          className="inline-flex h-10 items-center gap-2 rounded-lg border border-border px-4 text-sm font-semibold disabled:opacity-50"
+          className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border px-4 text-sm font-semibold disabled:opacity-50"
         >
           <RefreshCw
             size={16}
             className={loading ? "animate-spin" : ""}
           />
-          {loading ? "Loading..." : "Refresh"}
+
+          {loading
+            ? "Refreshing..."
+            : "Refresh"}
         </button>
       </div>
 
-      {err && (
-        <div className="mt-5 rounded-lg bg-red-50 p-4 text-sm text-red-700">
-          {err}
+      {/* ERROR */}
+
+      {error && (
+        <div className="mb-5 rounded-lg border border-red-200 bg-red-50 px-5 py-4 text-sm text-red-700">
+          {error}
         </div>
       )}
 
-      <div className="mt-6 grid gap-4 sm:grid-cols-3">
-        <Stat t="Mapped Projects" v={items.length} />
+      {/* STATS */}
+
+      <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
 
         <Stat
-          t="High Risk"
-          v={items.filter((x) => x.risk_band === "HIGH").length}
+          title="Mapped Projects"
+          value={items.length}
+          description="Projects with valid coordinates"
         />
 
         <Stat
-          t="Coordinate Groups"
-          v={coordinateGroups}
+          title="High Risk Locations"
+          value={highRisk}
+          description="High or critical risk markers"
         />
+
+        <Stat
+          title="Visible Markers"
+          value={filtered.length}
+          description="Current filter result"
+        />
+
+        <Stat
+          title="Risk Coverage"
+          value={`${riskCoverage}/${items.length}`}
+          description="Projects with saved predictions"
+        />
+
       </div>
 
-      <div className="mt-5 rounded-lg border border-border bg-white shadow-sm">
-        <div className="grid min-h-[520px] lg:grid-cols-[1fr_380px]">
-          <div className="relative overflow-hidden bg-[#eaf1f5] p-6">
-            <div
-              className="absolute inset-0 opacity-50"
-              style={{
-                backgroundImage:
-                  "linear-gradient(#cbd5e1 1px,transparent 1px),linear-gradient(90deg,#cbd5e1 1px,transparent 1px)",
-                backgroundSize: "42px 42px",
-              }}
+      {/* MAP CARD */}
+
+      <div className="overflow-hidden rounded-lg border border-border bg-white shadow-sm">
+
+        {/* TOOLBAR */}
+
+        <div className="flex flex-col gap-4 border-b border-border p-4 lg:flex-row lg:items-center lg:justify-between">
+
+          <div className="relative w-full lg:max-w-md">
+            <Search
+              size={18}
+              className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-muted"
             />
 
-            <div className="relative flex h-full min-h-[470px] items-center justify-center">
-              <div className="rounded-2xl border border-border bg-white/90 p-8 text-center shadow-sm">
-                <MapPin
-                  className="mx-auto text-saffron"
-                  size={32}
+            <input
+              value={search}
+              onChange={(e) =>
+                setSearch(e.target.value)
+              }
+              placeholder="Search project or location"
+              className="h-11 w-full rounded-lg border border-border bg-white pl-11 pr-4 text-sm outline-none focus:border-saffron"
+            />
+          </div>
+
+          <div className="grid grid-cols-2 gap-3 sm:flex">
+
+            <button
+              onClick={() =>
+                setShowFilters((v) => !v)
+              }
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-border px-4 text-sm font-medium"
+            >
+              <SlidersHorizontal size={17} />
+              Filters
+            </button>
+
+            <button
+              onClick={() =>
+                setShowMarkers((v) => !v)
+              }
+              className="inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-border px-4 text-sm font-medium"
+            >
+              <Layers3 size={17} />
+
+              {showMarkers
+                ? "Hide Markers"
+                : "Show Markers"}
+            </button>
+
+            <button
+              onClick={fullscreen}
+              className="col-span-2 inline-flex h-11 items-center justify-center gap-2 rounded-lg border border-border px-4 text-sm font-medium sm:col-span-1"
+            >
+              <Maximize2 size={17} />
+              Fullscreen
+            </button>
+
+          </div>
+        </div>
+
+        {/* FILTERS */}
+
+        {showFilters && (
+          <div className="border-b border-border bg-page p-4">
+
+            <div className="flex items-center justify-between">
+
+              <h2 className="text-sm font-semibold">
+                Map Filters
+              </h2>
+
+              <button
+                onClick={() =>
+                  setShowFilters(false)
+                }
+              >
+                <X size={17} />
+              </button>
+
+            </div>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+
+              <select
+                value={riskFilter}
+                onChange={(e) =>
+                  setRiskFilter(e.target.value)
+                }
+                className="h-11 rounded-lg border border-border bg-white px-3 text-sm"
+              >
+                <option value="ALL">
+                  All Risk Levels
+                </option>
+
+                <option value="LOW">
+                  Low
+                </option>
+
+                <option value="MEDIUM">
+                  Medium
+                </option>
+
+                <option value="HIGH">
+                  High
+                </option>
+
+                <option value="CRITICAL">
+                  Critical
+                </option>
+
+                <option value="UNSCORED">
+                  Unscored
+                </option>
+              </select>
+
+              <button
+                onClick={() => {
+                  setSearch("")
+                  setRiskFilter("ALL")
+                }}
+                className="h-11 rounded-lg border border-border bg-white px-3 text-sm"
+              >
+                Clear Filters
+              </button>
+
+            </div>
+          </div>
+        )}
+
+        {/* MAP + SIDEBAR */}
+
+        <div className="grid lg:grid-cols-[minmax(0,1fr)_360px]">
+
+          {/* MAP */}
+
+          <div className="relative min-h-[580px] bg-page">
+
+            <div
+              ref={mapNode}
+              className="absolute inset-0 z-0"
+            />
+
+            {/* MAP TITLE */}
+
+            <div className="absolute left-4 top-4 z-[500] rounded-lg border border-border bg-white/95 px-4 py-3 shadow">
+
+              <div className="flex items-center gap-2">
+
+                <MapIcon
+                  size={17}
+                  className="text-saffron"
                 />
 
-                <p className="mt-3 font-bold">
-                  PostGIS Project Layer
-                </p>
+                <span className="text-sm font-semibold">
+                  India Project Map
+                </span>
 
-                <p className="mt-1 max-w-sm text-sm text-muted">
-                  {items.length} projects returned for the India viewport.
-                </p>
+              </div>
 
-                <div className="mt-5 flex flex-wrap justify-center gap-2">
-                  {items.slice(0, 30).map((x, i) => {
-                    const latitude = Number(x.latitude);
-                    const longitude = Number(x.longitude);
+              <p className="mt-1 text-xs text-muted">
+                {filtered.length} visible project
+                {filtered.length === 1 ? "" : "s"}
+              </p>
 
-                    if (
-                      !Number.isFinite(latitude) ||
-                      !Number.isFinite(longitude)
-                    ) {
-                      return null;
-                    }
+            </div>
 
-                    return (
-                      <a
-                        key={x.project_id || i}
-                        href={`https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=14/${latitude}/${longitude}`}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="h-3 w-3 rounded-full border-2 border-white bg-saffron shadow"
-                        title={`${x.project_id || "Project"} ${
-                          x.risk_band || ""
-                        }`}
+            {/* MAP CONTROLS */}
+
+            <div className="absolute right-4 top-4 z-[500] flex flex-col overflow-hidden rounded-lg border border-border bg-white shadow">
+
+              <button
+                onClick={() => zoom(1)}
+                className="h-10 w-10 border-b"
+              >
+                +
+              </button>
+
+              <button
+                onClick={() => zoom(-1)}
+                className="h-10 w-10 border-b"
+              >
+                −
+              </button>
+
+              <button
+                onClick={reset}
+                className="h-10 w-10 text-xs font-semibold"
+              >
+                IN
+              </button>
+
+            </div>
+
+            {/* LEGEND */}
+
+            <div className="absolute bottom-4 left-4 z-[500] rounded-lg border border-border bg-white/95 p-4 shadow">
+
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+                Risk Legend
+              </p>
+
+              <div className="mt-3 grid grid-cols-2 gap-2">
+
+                {Object.entries(RISK_COLORS).map(
+                  ([name, color]) => (
+                    <span
+                      key={name}
+                      className="flex items-center gap-2 text-xs text-muted"
+                    >
+                      <i
+                        className="h-3 w-3 rounded-full border-2 border-white shadow"
+                        style={{
+                          backgroundColor: color,
+                        }}
                       />
-                    );
-                  })}
-                </div>
+
+                      {name}
+                    </span>
+                  )
+                )}
+
               </div>
             </div>
           </div>
 
-          <div className="max-h-[520px] overflow-y-auto border-t border-border lg:border-l lg:border-t-0">
-            {items.length ? (
-              items.map((x, i) => {
-                const latitude = Number(x.latitude);
-                const longitude = Number(x.longitude);
+          {/* PROJECT INFORMATION */}
 
-                return (
-                  <div
-                    key={x.project_id || i}
-                    className="border-b border-border p-5"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <Link
-                          to={`/projects/${x.project_id}`}
-                          className="font-semibold hover:text-saffron"
-                        >
-                          {x.project_id}
-                        </Link>
+          <aside className="max-h-[580px] overflow-y-auto border-t border-border bg-white lg:border-l lg:border-t-0">
 
-                        <p className="mt-1 text-xs text-muted">
-                          {Number.isFinite(latitude)
-                            ? latitude.toFixed(4)
-                            : "—"}
-                          ,{" "}
-                          {Number.isFinite(longitude)
-                            ? longitude.toFixed(4)
-                            : "—"}
-                        </p>
-                      </div>
+            <div className="sticky top-0 z-10 border-b border-border bg-white p-5">
 
-                      <span className="rounded-full bg-page px-2.5 py-1 text-xs font-semibold">
-                        {x.risk_band || "UNSCORED"}
-                      </span>
+              <h2 className="text-lg font-bold">
+                Project Information
+              </h2>
+
+              <p className="mt-1 text-sm text-muted">
+                Select a marker to inspect its location
+                and risk.
+              </p>
+
+            </div>
+
+            <div className="p-5">
+
+              {selected ? (
+                <div className="rounded-lg border border-border bg-page p-4">
+
+                  <div className="flex items-start justify-between gap-3">
+
+                    <div>
+
+                      <Link
+                        to={`/projects/${selected.project_id}`}
+                        className="font-semibold hover:text-saffron"
+                      >
+                        {selected.project_id}
+                      </Link>
+
+                      <p className="mt-1 text-xs text-muted">
+                        {selected.latitude.toFixed(5)},
+                        {" "}
+                        {selected.longitude.toFixed(5)}
+                      </p>
+
                     </div>
 
-                    {Number.isFinite(latitude) &&
-                      Number.isFinite(longitude) && (
-                        <a
-                          href={`https://www.openstreetmap.org/?mlat=${latitude}&mlon=${longitude}#map=14/${latitude}/${longitude}`}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-saffron"
-                        >
-                          Open map
-                          <ExternalLink size={14} />
-                        </a>
-                      )}
+                    <span
+                      className="rounded-full px-2.5 py-1 text-xs font-semibold text-white"
+                      style={{
+                        backgroundColor:
+                          RISK_COLORS[
+                            selected.risk_band
+                          ] ||
+                          RISK_COLORS.UNSCORED,
+                      }}
+                    >
+                      {selected.risk_band}
+                    </span>
+
                   </div>
-                );
-              })
-            ) : (
-              <div className="p-10 text-center text-sm text-muted">
-                {loading
-                  ? "Loading projects..."
-                  : "No projects with coordinates."}
+
+                  <div className="mt-4 grid gap-3">
+
+                    <Info label="Risk Probability">
+                      {selected.risk == null
+                        ? "No prediction"
+                        : `${(
+                            selected.risk * 100
+                          ).toFixed(1)}%`}
+                    </Info>
+
+                    <Info label="Latitude">
+                      {selected.latitude.toFixed(5)}
+                    </Info>
+
+                    <Info label="Longitude">
+                      {selected.longitude.toFixed(5)}
+                    </Info>
+
+                    <a
+                      target="_blank"
+                      rel="noreferrer"
+                      href={`https://www.openstreetmap.org/?mlat=${selected.latitude}&mlon=${selected.longitude}#map=14/${selected.latitude}/${selected.longitude}`}
+                      className="inline-flex h-10 items-center justify-center rounded-lg bg-saffron px-4 text-sm font-semibold text-white"
+                    >
+                      Open in OpenStreetMap
+                    </a>
+
+                  </div>
+
+                </div>
+              ) : (
+                <div className="rounded-lg border border-dashed border-border bg-page px-4 py-10 text-center">
+
+                  <MapPin
+                    size={22}
+                    className="mx-auto text-muted"
+                  />
+
+                  <p className="mt-4 text-sm font-semibold">
+                    No project selected
+                  </p>
+
+                  <p className="mt-2 text-sm text-muted">
+                    Click a marker on the map to view
+                    project information.
+                  </p>
+
+                </div>
+              )}
+
+              {/* PROJECT LIST */}
+
+              <div className="mt-5 space-y-3">
+
+                {filtered
+                  .slice(0, 50)
+                  .map((item) => (
+                    <button
+                      key={item.project_id}
+                      onClick={() => {
+                        setSelected(item)
+
+                        if (mapRef.current) {
+                          mapRef.current.setView(
+                            [
+                              item.latitude,
+                              item.longitude,
+                            ],
+                            Math.max(
+                              mapRef.current.getZoom(),
+                              10
+                            )
+                          )
+                        }
+                      }}
+                      className={`w-full rounded-lg border p-4 text-left ${
+                        selected?.project_id ===
+                        item.project_id
+                          ? "border-saffron bg-orange-50/50"
+                          : "border-border hover:border-saffron"
+                      }`}
+                    >
+
+                      <div className="flex items-center justify-between gap-3">
+
+                        <span className="font-semibold">
+                          {item.project_id}
+                        </span>
+
+                        <span
+                          className="rounded-full px-2 py-1 text-[11px] font-semibold text-white"
+                          style={{
+                            backgroundColor:
+                              RISK_COLORS[
+                                item.risk_band
+                              ] ||
+                              RISK_COLORS.UNSCORED,
+                          }}
+                        >
+                          {item.risk_band}
+                        </span>
+
+                      </div>
+
+                      <p className="mt-2 text-xs text-muted">
+                        {item.latitude.toFixed(4)},
+                        {" "}
+                        {item.longitude.toFixed(4)}
+                      </p>
+
+                    </button>
+                  ))}
+
               </div>
-            )}
-          </div>
+            </div>
+          </aside>
         </div>
       </div>
     </section>
-  );
+  )
 }
 
-function Stat({ t, v }) {
+function Stat({
+  title,
+  value,
+  description,
+}) {
   return (
     <div className="rounded-lg border border-border bg-white p-5 shadow-sm">
-      <p className="text-sm text-muted">{t}</p>
-      <p className="mt-2 text-2xl font-bold">{v}</p>
+
+      <p className="text-sm font-medium text-muted">
+        {title}
+      </p>
+
+      <p className="mt-3 text-2xl font-bold text-text">
+        {value}
+      </p>
+
+      <p className="mt-2 text-xs text-muted">
+        {description}
+      </p>
+
     </div>
-  );
+  )
+}
+
+function Info({ label, children }) {
+  return (
+    <div className="rounded-lg border border-border bg-white p-3">
+
+      <p className="text-xs font-semibold uppercase tracking-wide text-muted">
+        {label}
+      </p>
+
+      <p className="mt-1 text-sm font-semibold text-text">
+        {children}
+      </p>
+
+    </div>
+  )
 }

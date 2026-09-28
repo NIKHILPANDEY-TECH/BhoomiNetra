@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from geoalchemy2.elements import WKTElement
-from sqlalchemy import func, select
+from sqlalchemy import Integer, cast, func, select
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import project_scope, require_permission
@@ -95,15 +95,15 @@ def create(
     db: Session = Depends(get_db),
 ):
     max_number = db.scalar(
-        select(
-            func.max(
-                func.cast(
-                    func.substring(Project.public_id, 4),
-                    int,
-                )
+    select(
+        func.max(
+            cast(
+                func.substring(Project.public_id, 4),
+                Integer,
             )
         )
     )
+)
 
     next_number = (max_number or 0) + 1
 
