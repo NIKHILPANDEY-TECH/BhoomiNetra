@@ -1,101 +1,54 @@
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL ||
   "https://bhoominetra-backend.onrender.com"
-).replace(/\/$/, "");
+).replace(/\/$/, "")
 
-let refreshPromise = null;
-
-/* =========================
-   TOKEN HELPERS
-========================= */
+let refreshPromise = null
 
 export function getToken() {
-  return localStorage.getItem("bhoomiAccessToken");
+  return localStorage.getItem("bhoomiAccessToken")
 }
-
-export function getRefreshToken() {
-  return localStorage.getItem("bhoomiRefreshToken");
-}
-
-/* =========================
-   SESSION
-========================= */
 
 export function clearSession() {
-  const keys = [
+  [
     "bhoomiAccessToken",
     "bhoomiRefreshToken",
     "bhoomiRole",
     "bhoomiBackendRole",
     "bhoomiEmail",
     "bhoomiUser",
-  ];
-
-  keys.forEach((key) => {
-    localStorage.removeItem(key);
-  });
+  ].forEach((key) => {
+    localStorage.removeItem(key)
+  })
 }
 
-/* =========================
-   LOGIN
-========================= */
+async function parseResponse(response) {
+  const raw = await response.text()
 
-export async function login(email, password) {
-  const response = await fetch(`${API_BASE}/api/auth/login`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      email,
-      password,
-    }),
-  });
-
-  const data = await parseResponse(response);
-
-  if (!response.ok) {
-    throw new Error(
-      data?.detail ||
-        data?.message ||
-        data?.error ||
-        "Login failed"
-    );
+  if (!raw) {
+    return {}
   }
 
-  if (data.access_token) {
-    localStorage.setItem(
-      "bhoomiAccessToken",
-      data.access_token
-    );
+  try {
+    return JSON.parse(raw)
+  } catch {
+    return {
+      message: raw,
+    }
   }
-
-  if (data.refresh_token) {
-    localStorage.setItem(
-      "bhoomiRefreshToken",
-      data.refresh_token
-    );
-  }
-
-  return data;
 }
-
-/* =========================
-   REFRESH TOKEN
-========================= */
 
 async function refreshAccessToken() {
-  const refreshToken = getRefreshToken();
-
-  if (!refreshToken) {
-    throw new Error("No refresh token available");
+  if (refreshPromise) {
+    return refreshPromise
   }
 
-  // If another request is already refreshing,
-  // wait for that same request instead of creating
-  // multiple refresh requests.
-  if (refreshPromise) {
-    return refreshPromise;
+  const refreshToken = localStorage.getItem(
+    "bhoomiRefreshToken"
+  )
+
+  if (!refreshToken) {
+    return false
   }
 
   refreshPromise = (async () => {
@@ -106,240 +59,309 @@ async function refreshAccessToken() {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
+            Accept: "application/json",
           },
           body: JSON.stringify({
             refresh_token: refreshToken,
           }),
         }
-      );
-
-      const data = await parseResponse(response);
+      )
 
       if (!response.ok) {
-        throw new Error(
-          data?.detail ||
-            data?.message ||
-            data?.error ||
-            "Token refresh failed"
-        );
+        return false
       }
 
+      const data = await parseResponse(response)
+
       if (!data.access_token) {
-        throw new Error(
-          "Refresh response did not contain access_token"
-        );
+        return false
       }
 
       localStorage.setItem(
         "bhoomiAccessToken",
         data.access_token
-      );
+      )
 
       if (data.refresh_token) {
         localStorage.setItem(
           "bhoomiRefreshToken",
           data.refresh_token
-        );
+        )
       }
 
-      return data.access_token;
+      return true
+    } catch (error) {
+      console.error(
+        "Token refresh failed:",
+        error
+      )
+
+      return false
     } finally {
-      refreshPromise = null;
+      refreshPromise = null
     }
-  })();
+  })()
 
-  return refreshPromise;
+  return refreshPromise
 }
-
-/* =========================
-   REDIRECT
-========================= */
-
-function redirectToLogin() {
-  clearSession();
-
-  if (window.location.pathname !== "/login") {
-    window.location.replace("/login");
-  }
-}
-
-/* =========================
-   RESPONSE PARSER
-========================= */
-
-async function parseResponse(response) {
-  const contentType =
-    response.headers.get("content-type") || "";
-
-  if (contentType.includes("application/json")) {
-    try {
-      return await response.json();
-    } catch {
-      return {};
-    }
-  }
-
-  const text = await response.text();
-
-  if (!text) {
-    return {};
-  }
-
-  return {
-    message: text,
-  };
-}
-
-/* =========================
-   MAIN REQUEST
-========================= */
 
 async function request(
   path,
   options = {},
   retry = true
 ) {
-  const token = getToken();
-
   const headers = new Headers(
     options.headers || {}
-  );
+  )
 
-  if (!headers.has("Content-Type") && options.body) {
+  if (
+    options.body &&
+    !(options.body instanceof FormData) &&
+    !headers.has("Content-Type")
+  ) {
     headers.set(
       "Content-Type",
       "application/json"
-    );
+    )
   }
+
+  headers.set(
+    "Accept",
+    "application/json"
+  )
+
+  const token = getToken()
 
   if (token) {
     headers.set(
       "Authorization",
       `Bearer ${token}`
-    );
+    )
   }
 
-  let response;
-
-  try {
-    response = await fetch(
-      `${API_BASE}${path}`,
-      {
-        ...options,
-        headers,
-      }
-    );
-  } catch (error) {
-    throw new Error(
-      error?.message ||
-        "Unable to connect to backend"
-    );
-  }
-
-  /* =========================
-     HANDLE 401
-  ========================= */
-
-  if (response.status === 401 && retry) {
-    try {
-      await refreshAccessToken();
-
-      // Retry original request once with new token.
-      return request(path, options, false);
-    } catch {
-      redirectToLogin();
-
-      throw new Error(
-        "Session expired. Please login again."
-      );
+  const response = await fetch(
+    `${API_BASE}${path}`,
+    {
+      ...options,
+      headers,
     }
+  )
+
+  /*
+   * Access token expired.
+   *
+   * Only one refresh request is allowed.
+   * Other failed requests wait for the same promise.
+   */
+  if (
+    response.status === 401 &&
+    retry
+  ) {
+    const refreshed =
+      await refreshAccessToken()
+
+    if (refreshed) {
+      return request(
+        path,
+        options,
+        false
+      )
+    }
+
+    clearSession()
+
+    if (
+      window.location.pathname !==
+      "/login"
+    ) {
+      window.location.replace(
+        "/login"
+      )
+    }
+
+    throw new Error(
+      "Session expired"
+    )
   }
 
-  /* =========================
-     HANDLE OTHER ERRORS
-  ========================= */
-
-  const data = await parseResponse(response);
+  const data =
+    await parseResponse(response)
 
   if (!response.ok) {
-    const message =
-      data?.detail ||
-      data?.message ||
-      data?.error ||
-      `Request failed with status ${response.status}`;
+    const detail =
+      typeof data?.detail === "string"
+        ? data.detail
+        : data?.error?.message ||
+          data?.message ||
+          `Request failed (${response.status})`
 
-    const error = new Error(message);
+    const error =
+      new Error(detail)
 
-    error.status = response.status;
-    error.data = data;
+    error.status =
+      response.status
 
-    throw error;
+    error.data = data
+
+    throw error
   }
 
-  return data;
+  return data
 }
 
-/* =========================
-   API OBJECT
-========================= */
-
 export const api = {
+  base: API_BASE,
+
   get(path, options = {}) {
     return request(path, {
       ...options,
       method: "GET",
-    });
+    })
   },
 
-  post(path, body = {}, options = {}) {
+  post(
+    path,
+    body = {},
+    options = {}
+  ) {
     return request(path, {
       ...options,
       method: "POST",
       body: JSON.stringify(body),
-    });
+    })
   },
 
-  put(path, body = {}, options = {}) {
+  put(
+    path,
+    body = {},
+    options = {}
+  ) {
     return request(path, {
       ...options,
       method: "PUT",
       body: JSON.stringify(body),
-    });
+    })
   },
 
-  patch(path, body = {}, options = {}) {
+  patch(
+    path,
+    body = {},
+    options = {}
+  ) {
     return request(path, {
       ...options,
       method: "PATCH",
       body: JSON.stringify(body),
-    });
+    })
   },
 
   delete(path, options = {}) {
     return request(path, {
       ...options,
       method: "DELETE",
-    });
+    })
   },
-};
-
-/* =========================
-   LOGOUT
-========================= */
-
-export async function logout() {
-  try {
-    await api.post("/api/auth/logout", {});
-  } catch {
-    // Even if backend logout fails,
-    // clear the local session.
-  }
-
-  clearSession();
 }
 
-/* =========================
-   API BASE URL
-========================= */
+/*
+ * IMPORTANT:
+ * Demo login uses the backend's existing
+ * /api/auth/demo-login endpoint.
+ */
+export async function loginDemo(role) {
+  const data = await api.post(
+    "/api/auth/demo-login",
+    { role }
+  )
 
-export { API_BASE };
+  localStorage.setItem(
+    "bhoomiAccessToken",
+    data.access_token
+  )
+
+  localStorage.setItem(
+    "bhoomiRefreshToken",
+    data.refresh_token
+  )
+
+  const me = await api.get(
+    "/api/auth/me"
+  )
+
+  localStorage.setItem(
+    "bhoomiBackendRole",
+    me.role
+  )
+
+  localStorage.setItem(
+    "bhoomiUser",
+    JSON.stringify(me)
+  )
+
+  localStorage.setItem(
+    "bhoomiRole",
+    me.role === "NATIONAL_ADMIN"
+      ? "administrative"
+      : "project-manager"
+  )
+
+  localStorage.setItem(
+    "bhoomiEmail",
+    me.username
+  )
+
+  return me
+}
+
+export async function login(
+  username,
+  password
+) {
+  const data = await api.post(
+    "/api/auth/login",
+    {
+      username,
+      password,
+    }
+  )
+
+  localStorage.setItem(
+    "bhoomiAccessToken",
+    data.access_token
+  )
+
+  localStorage.setItem(
+    "bhoomiRefreshToken",
+    data.refresh_token
+  )
+
+  const me = await api.get(
+    "/api/auth/me"
+  )
+
+  localStorage.setItem(
+    "bhoomiBackendRole",
+    me.role
+  )
+
+  localStorage.setItem(
+    "bhoomiUser",
+    JSON.stringify(me)
+  )
+
+  localStorage.setItem(
+    "bhoomiRole",
+    me.role === "NATIONAL_ADMIN"
+      ? "administrative"
+      : "project-manager"
+  )
+
+  localStorage.setItem(
+    "bhoomiEmail",
+    me.username
+  )
+
+  return me
+}
+
+export { API_BASE }
