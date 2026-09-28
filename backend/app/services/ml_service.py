@@ -1,19 +1,87 @@
+import time
+from typing import Any
+
 import httpx
 
 from app.core.config import settings
 
 
+class MLServiceUnavailable(RuntimeError):
+    """The ML service is temporarily unavailable or waking from a cold start."""
+
+
 class MLService:
     def __init__(self):
-        self.metadata = None
+        self.metadata: dict[str, Any] | None = None
 
-    def _url(self, path):
+    def _url(self, path: str) -> str:
         return f"{settings.ML_SERVICE_URL.rstrip('/')}{path}"
 
-    def load(self):
-        response = httpx.get(self._url("/health"), timeout=settings.ML_SERVICE_TIMEOUT)
-        response.raise_for_status()
+    def _request(self, method: str, path: str, *, json: dict | None = None) -> httpx.Response:
+        """Call ML with bounded retries for Render cold starts/transient 502/503/504s."""
+        attempts = max(1, int(settings.ML_SERVICE_RETRIES) + 1)
+        last_error: Exception | None = None
+
+        timeout = httpx.Timeout(
+            connect=10.0,
+            read=float(settings.ML_SERVICE_TIMEOUT),
+            write=10.0,
+            pool=10.0,
+        )
+
+        for attempt in range(attempts):
+            try:
+                response = httpx.request(
+                    method,
+                    self._url(path),
+                    json=json,
+                    timeout=timeout,
+                )
+
+                # Render can briefly return a gateway/service-unavailable response while
+                # the ML web service is waking up. Retry those transient statuses.
+                if response.status_code in (502, 503, 504):
+                    last_error = MLServiceUnavailable(
+                        f"ML service returned HTTP {response.status_code}"
+                    )
+                    if attempt < attempts - 1:
+                        time.sleep(float(settings.ML_SERVICE_RETRY_DELAY) * (attempt + 1))
+                        continue
+                    raise last_error
+
+                response.raise_for_status()
+                return response
+
+            except MLServiceUnavailable:
+                if attempt >= attempts - 1:
+                    raise
+            except (httpx.ConnectError, httpx.ConnectTimeout, httpx.ReadTimeout,
+                    httpx.WriteTimeout, httpx.PoolTimeout, httpx.RemoteProtocolError) as exc:
+                last_error = exc
+                if attempt < attempts - 1:
+                    time.sleep(float(settings.ML_SERVICE_RETRY_DELAY) * (attempt + 1))
+                    continue
+                raise MLServiceUnavailable(
+                    "ML service is temporarily unavailable or waking from a cold start"
+                ) from exc
+            except httpx.HTTPStatusError as exc:
+                # Non-transient ML errors should reach the route as a normal service error.
+                raise exc
+
+        raise MLServiceUnavailable("ML service is temporarily unavailable") from last_error
+
+    def load(self) -> dict[str, Any]:
+        """Refresh metadata explicitly; never call this during backend startup."""
+        response = self._request("GET", "/health")
         self.metadata = response.json()
+        return self.metadata
+
+    def check_ready(self) -> dict[str, Any]:
+        """Explicit readiness probe. This may wake/load the ML service."""
+        response = self._request("GET", "/ready")
+        data = response.json()
+        self.metadata = data
+        return data
 
     def build_features(self, project):
         affected = max(int(project.affected_families or 0), 1)
@@ -57,24 +125,22 @@ class MLService:
         }
 
     def predict(self, features):
-        response = httpx.post(self._url("/predict"), json={"features": features}, timeout=settings.ML_SERVICE_TIMEOUT)
-        response.raise_for_status()
-        return response.json()
+        response = self._request("POST", "/predict", json={"features": features})
+        data = response.json()
+        self.metadata = {"model_version": data.get("model_version", "unknown"), "status": "ok"}
+        return data
 
     def explain(self, features):
-        response = httpx.post(self._url("/explain"), json={"features": features}, timeout=settings.ML_SERVICE_TIMEOUT)
-        response.raise_for_status()
+        response = self._request("POST", "/explain", json={"features": features})
         return response.json()["factors"]
 
-    def predict_delay(self, features):
-        return float(self.predict(features)["risk_probability"])
-
-    def predict_delay_days(self, features):
-        return float(self.predict(features)["predicted_delay_days"])
-
     def get_model_metadata(self):
+        # /health is intentionally shallow and does not load the ML model.
         if self.metadata is None:
-            self.load()
+            try:
+                self.load()
+            except MLServiceUnavailable:
+                return {"model_version": "unavailable"}
         return self.metadata or {"model_version": "unknown"}
 
 

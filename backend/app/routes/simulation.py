@@ -5,6 +5,7 @@ from app.database.database import get_db
 from app.routes.predictions import features
 from app.routes.projects import get_project
 from app.services.audit_service import audit
+from app.services.ml_service import MLServiceUnavailable
 from app.services.simulation_service import simulate
 
 router = APIRouter(prefix="/api/projects", tags=["Simulation"])
@@ -27,6 +28,8 @@ def simulation(project_id: str, body: dict, request: Request, user=Depends(requi
         result = simulate(features(project), changes)
     except (TypeError, ValueError) as exc:
         raise HTTPException(400, f"Invalid simulation values: {exc}") from exc
+    except MLServiceUnavailable as exc:
+        raise HTTPException(503, str(exc)) from exc
     audit(db, user, "SIMULATION_RUN", "PROJECT", project.id, request.state.request_id, {"changes": changes})
     db.commit()
     return {"data": result, "message": "Success"}

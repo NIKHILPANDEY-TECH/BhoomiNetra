@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import threading
 import warnings
 
 import joblib
@@ -16,22 +17,26 @@ regressor = None
 calibrator = None
 schema = None
 metadata = None
+model_lock = threading.Lock()
 
 
 def load_models():
     global classifier, regressor, calibrator, schema, metadata
     if classifier is not None:
         return
-    required = ["delay_classifier.pkl", "delay_regressor.pkl", "feature_schema.json", "model_metadata.json"]
-    missing = [name for name in required if not (MODEL_DIR / name).exists()]
-    if missing:
-        raise RuntimeError(f"Missing ML artifacts: {missing}")
-    classifier = joblib.load(MODEL_DIR / "delay_classifier.pkl")
-    regressor = joblib.load(MODEL_DIR / "delay_regressor.pkl")
-    calibration_path = MODEL_DIR / "classifier_calibrator.pkl"
-    calibrator = joblib.load(calibration_path) if calibration_path.exists() else None
-    schema = json.loads((MODEL_DIR / "feature_schema.json").read_text(encoding="utf-8"))
-    metadata = json.loads((MODEL_DIR / "model_metadata.json").read_text(encoding="utf-8"))
+    with model_lock:
+        if classifier is not None:
+            return
+        required = ["delay_classifier.pkl", "delay_regressor.pkl", "feature_schema.json", "model_metadata.json"]
+        missing = [name for name in required if not (MODEL_DIR / name).exists()]
+        if missing:
+            raise RuntimeError(f"Missing ML artifacts: {missing}")
+        classifier = joblib.load(MODEL_DIR / "delay_classifier.pkl")
+        regressor = joblib.load(MODEL_DIR / "delay_regressor.pkl")
+        calibration_path = MODEL_DIR / "classifier_calibrator.pkl"
+        calibrator = joblib.load(calibration_path) if calibration_path.exists() else None
+        schema = json.loads((MODEL_DIR / "feature_schema.json").read_text(encoding="utf-8"))
+        metadata = json.loads((MODEL_DIR / "model_metadata.json").read_text(encoding="utf-8"))
 
 
 def validate(features: dict) -> dict:
@@ -103,25 +108,40 @@ class FeatureRequest(BaseModel):
 
 app = FastAPI(title="BhoomiMitra ML Service", version="2.0.0")
 
-@app.on_event("startup")
-def startup():
-    load_models()
 
 @app.get("/health")
 def health():
-    load_models()
-    return {"status": "ok", **metadata}
+    """Cheap liveness endpoint. Does not load joblib/SHAP artifacts."""
+    loaded = classifier is not None
+    version = metadata.get("model_version", "unknown") if metadata else "deferred"
+    return {"status": "ok", "model_loaded": loaded, "model_version": version}
+
+
+@app.get("/ready")
+def ready():
+    """Explicit readiness endpoint; loads the model if the service was cold."""
+    try:
+        load_models()
+        return {"status": "ready", "model_loaded": True, "model_version": metadata.get("model_version", "unknown")}
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"ML model is not ready: {exc}") from exc
+
 
 @app.post("/predict")
 def predict_endpoint(request: FeatureRequest):
     try:
         return predict(request.features)
-    except Exception as exc:
+    except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"ML inference temporarily unavailable: {exc}") from exc
+
 
 @app.post("/explain")
 def explain_endpoint(request: FeatureRequest):
     try:
         return {"factors": explain(request.features), "note": "Model explanation; SHAP contribution is not causal evidence."}
-    except Exception as exc:
+    except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"ML explanation temporarily unavailable: {exc}") from exc

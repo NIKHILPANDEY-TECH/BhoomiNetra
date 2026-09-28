@@ -13,7 +13,9 @@ class Settings(BaseSettings):
     CORS_ORIGINS: str = "https://bhoominetra-frontend.onrender.com,http://localhost:5173"
     DEMO_MODE: bool = True
     ML_SERVICE_URL: str = "http://localhost:8001"
-    ML_SERVICE_TIMEOUT: float = 30.0
+    ML_SERVICE_TIMEOUT: float = 90.0
+    ML_SERVICE_RETRIES: int = 3
+    ML_SERVICE_RETRY_DELAY: float = 2.0
     LOW_RISK_THRESHOLD: float = 0.40
     HIGH_RISK_THRESHOLD: float = 0.70
     MAX_UPLOAD_MB: int = 20
