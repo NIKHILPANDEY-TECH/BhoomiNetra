@@ -1,4 +1,3 @@
-```jsx
 import { Component, StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import {
@@ -83,7 +82,7 @@ class ErrorBoundary extends Component {
       <div className="min-h-screen bg-page px-6 py-12">
         <div className="mx-auto flex min-h-[70vh] max-w-xl items-center justify-center">
           <div className="w-full rounded-2xl border border-border bg-white p-8 text-center shadow-sm">
-            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-red-50 text-2xl">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-full bg-red-50 text-2xl font-bold text-red-600">
               !
             </div>
 
@@ -120,7 +119,7 @@ class ErrorBoundary extends Component {
                   Technical details
                 </summary>
 
-                <pre className="mt-3 overflow-auto rounded-lg bg-page p-3 text-xs text-muted">
+                <pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-page p-3 text-xs text-muted">
                   {this.state.error?.stack ||
                     this.state.error?.message ||
                     "Unknown error"}
@@ -167,8 +166,7 @@ function NotFound() {
         </h1>
 
         <p className="mt-3 text-sm leading-6 text-muted">
-          The page you requested does not exist or may have
-          moved.
+          The page you requested does not exist or may have moved.
         </p>
 
         <a
@@ -189,6 +187,7 @@ createRoot(
     <ErrorBoundary>
       <BrowserRouter>
         <Routes>
+
           <Route
             path="/login"
             element={<Login />}
@@ -207,6 +206,7 @@ createRoot(
               </Protected>
             }
           >
+
             <Route
               index
               element={
@@ -312,15 +312,16 @@ createRoot(
               path="*"
               element={<NotFound />}
             />
+
           </Route>
 
           <Route
             path="*"
             element={<NotFound />}
           />
+
         </Routes>
       </BrowserRouter>
     </ErrorBoundary>
   </StrictMode>
 )
-```
