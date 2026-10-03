@@ -1,1 +1,0 @@
-Inference deployment package. Trained V2 artifacts retained; training dependencies are in requirements-training.txt.
