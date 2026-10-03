@@ -1,16 +1,62 @@
-# React + Vite
+# BhoomiNetra Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React/Vite frontend for the BhoomiNetra land-acquisition delay intelligence system.
 
-Currently, two official plugins are available:
+## Stack
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+React · Vite · Tailwind CSS · React Router · Axios · Recharts · React-Leaflet · Lucide React
 
-## React Compiler
+## Run locally
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+```bash
+cd Frontend
+npm install
+npm run dev
+```
 
-## Expanding the ESLint configuration
+Vite normally starts at:
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```text
+http://localhost:5173
+```
+
+## Environment
+
+Set the backend API base URL through the project's Vite environment configuration.
+
+```env
+VITE_API_BASE_URL=http://127.0.0.1:8000
+```
+
+Use the deployed backend URL for production.
+
+## Main areas
+
+- Login and role-based access
+- Dashboard
+- Projects and project details
+- Risk analysis and stage prediction
+- High-risk projects
+- Recommendations
+- What-if simulation
+- GIS
+- Alerts
+- Analytics and reports
+- Audit logs
+- Settings
+
+The frontend consumes the existing backend API and does not contain independent ML decision logic.
+
+## Build
+
+```bash
+npm run build
+```
+
+## Deployment
+
+The frontend is intended for Vercel deployment. Configure the production API base URL in the Vercel environment before building.
+
+## Development rule
+
+Keep API communication in the existing API layer. Do not introduce mock prediction logic or change backend contracts without an explicit API change.
