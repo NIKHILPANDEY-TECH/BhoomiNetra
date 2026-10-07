@@ -36,6 +36,9 @@ FastAPI Backend
            ├── Delay Regression
            └── SHAP Explainability
 ```
+Internal Architecture Diagram -
+![BhoomiNetra Internal System Architecture](diagram.png)
+
 
 ## Technology
 
