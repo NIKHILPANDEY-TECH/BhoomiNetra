@@ -58,3 +58,26 @@ a {
   outline: 2px solid #FF9933;
   outline-offset: 2px;
 }
+
+/* Clear, restrained feedback while the ML prediction request is running. */
+.ml-action-button {
+  transform-origin: center;
+  transition: transform 160ms ease, box-shadow 200ms ease, background-color 200ms ease;
+}
+
+.ml-action-button.is-loading {
+  animation: ml-button-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes ml-button-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 153, 51, 0.12); }
+  50% { box-shadow: 0 0 0 5px rgba(255, 153, 51, 0.2); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ml-action-button,
+  .ml-action-button.is-loading {
+    animation: none;
+    transition: none;
+  }
+}
