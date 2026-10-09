@@ -9,7 +9,7 @@ import {
   X,
 } from "lucide-react"
 
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Link } from "react-router-dom"
 import { api } from "../lib/api"
 
@@ -83,6 +83,55 @@ function loadLeaflet() {
   return leafletPromise
 }
 
+
+let markerClusterPromise
+
+function loadMarkerCluster() {
+  if (window.L?.markerClusterGroup) return Promise.resolve(true)
+  if (markerClusterPromise) return markerClusterPromise
+
+  markerClusterPromise = new Promise((resolve) => {
+    const cssId = "bhoomi-markercluster-css"
+    if (!document.getElementById(cssId)) {
+      const css = document.createElement("link")
+      css.id = cssId
+      css.rel = "stylesheet"
+      css.href = "https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"
+      document.head.appendChild(css)
+
+      const themeCss = document.createElement("link")
+      themeCss.id = "bhoomi-markercluster-theme-css"
+      themeCss.rel = "stylesheet"
+      themeCss.href = "https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"
+      document.head.appendChild(themeCss)
+    }
+
+    const existing = document.querySelector(
+      'script[data-bhoomi-markercluster="true"]'
+    )
+
+    if (existing) {
+      if (window.L?.markerClusterGroup) {
+        resolve(true)
+      } else {
+        existing.addEventListener("load", () => resolve(Boolean(window.L?.markerClusterGroup)), { once: true })
+        existing.addEventListener("error", () => resolve(false), { once: true })
+      }
+      return
+    }
+
+    const script = document.createElement("script")
+    script.src = "https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"
+    script.async = true
+    script.dataset.bhoomiMarkercluster = "true"
+    script.onload = () => resolve(Boolean(window.L?.markerClusterGroup))
+    script.onerror = () => resolve(false)
+    document.head.appendChild(script)
+  })
+
+  return markerClusterPromise
+}
+
 function normalize(response) {
   const payload = response?.data ?? response
 
@@ -97,7 +146,7 @@ function normalize(response) {
       ...x,
       latitude: Number(x.latitude),
       longitude: Number(x.longitude),
-      risk: x.risk == null ? null : Number(x.risk),
+      risk: (x.risk ?? x.risk_probability) == null ? null : Number(x.risk ?? x.risk_probability),
       risk_band: String(x.risk_band || "UNSCORED").toUpperCase(),
     }))
     .filter(
@@ -119,6 +168,8 @@ export default function GIS() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState("")
+  const [tileStatus, setTileStatus] = useState("loading")
+  const [hasMore, setHasMore] = useState(false)
 
   // IMPORTANT:
   // This state fixes the Leaflet/data loading race condition.
@@ -127,6 +178,9 @@ export default function GIS() {
   const mapRef = useRef(null)
   const mapNode = useRef(null)
   const layerRef = useRef(null)
+  const requestRef = useRef(null)
+  const debounceRef = useRef(null)
+  const loadSequenceRef = useRef(0)
 
   const role = localStorage.getItem("bhoomiRole")
 
@@ -138,75 +192,90 @@ export default function GIS() {
   ].includes(role)
 
   // ---------------------------------------------------------
-  // LOAD GIS DATA
+  // LOAD ONLY PROJECTS INSIDE THE CURRENT MAP VIEWPORT
   // ---------------------------------------------------------
 
-  const load = async () => {
+  const load = useCallback(async (boundsOverride = null) => {
+    const map = mapRef.current
+    if (!map && !boundsOverride) return
+
+    const bounds = boundsOverride || map.getBounds()
+    const params = new URLSearchParams({
+      min_lat: String(Math.max(-90, bounds.getSouth())),
+      max_lat: String(Math.min(90, bounds.getNorth())),
+      min_lng: String(Math.max(-180, bounds.getWest())),
+      max_lng: String(Math.min(180, bounds.getEast())),
+      limit: "500",
+    })
+
+    // Cancel an older viewport request before starting the newer one.
+    requestRef.current?.abort()
+    const controller = new AbortController()
+    requestRef.current = controller
+    const requestSequence = ++loadSequenceRef.current
+
     try {
       setLoading(true)
       setError("")
 
       const response = await api.get(
-        "/api/gis/projects?min_lat=8&max_lat=37&min_lng=68&max_lng=98"
+        `/api/gis/projects?${params.toString()}`,
+        { signal: controller.signal }
       )
 
+      if (controller.signal.aborted || requestSequence !== loadSequenceRef.current) return
+
       const data = normalize(response)
-
-      console.log("GIS API response:", response)
-      console.log("GIS projects:", data.length)
-      console.log("GIS data:", data)
-
       setItems(data)
+      setHasMore(Boolean(response?.has_more))
 
-      if (selected) {
-        setSelected(
-          data.find(
-            (x) => x.project_id === selected.project_id
-          ) || null
-        )
-      }
+      setSelected((current) =>
+        current
+          ? data.find((x) => x.project_id === current.project_id) || null
+          : null
+      )
     } catch (err) {
-      console.error("GIS loading error:", err)
+      if (err?.name === "AbortError" || controller.signal.aborted) return
 
+      console.error("GIS loading error:", err)
       setError(
-        err?.response?.data?.detail ||
+        err?.data?.detail ||
           err?.message ||
           "Failed to load GIS projects."
       )
-
       setItems([])
       setSelected(null)
     } finally {
-      setLoading(false)
+      if (requestSequence === loadSequenceRef.current) {
+        setLoading(false)
+      }
     }
-  }
+  }, [])
 
-  useEffect(() => {
-    if (administrative) {
-      load()
-    }
-  }, [administrative])
+  const scheduleViewportLoad = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current)
+    debounceRef.current = setTimeout(() => {
+      if (mapRef.current) load(mapRef.current.getBounds())
+    }, 300)
+  }, [load])
 
   // ---------------------------------------------------------
-  // INITIALIZE LEAFLET
+  // INITIALIZE LEAFLET, TILE STATUS, CLUSTERING AND VIEWPORT LOAD
   // ---------------------------------------------------------
 
   useEffect(() => {
-    if (!administrative || !mapNode.current) {
-      return
-    }
+    if (!administrative || !mapNode.current) return
 
     let cancelled = false
+    let mapInstance = null
+    let tileLayer = null
 
     loadLeaflet()
-      .then((L) => {
-        if (cancelled) {
-          return
-        }
+      .then(async (L) => {
+        if (cancelled || mapRef.current) return
 
-        if (mapRef.current) {
-          return
-        }
+        const clusteringAvailable = await loadMarkerCluster()
+        if (cancelled || mapRef.current) return
 
         const map = L.map(mapNode.current, {
           center: CENTER,
@@ -214,33 +283,57 @@ export default function GIS() {
           zoomControl: false,
           minZoom: 4,
           maxZoom: 18,
+          preferCanvas: true,
         })
 
-        L.tileLayer(
+        mapInstance = map
+        setTileStatus("loading")
+
+        tileLayer = L.tileLayer(
           "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
           {
             maxZoom: 19,
             attribution:
               '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">OpenStreetMap</a>',
+            updateWhenIdle: true,
+            keepBuffer: 2,
           }
-        ).addTo(map)
+        )
 
-        const layer = L.layerGroup().addTo(map)
+        tileLayer.on("tileload", () => {
+          setTileStatus("ok")
+        })
+        tileLayer.on("tileerror", () => {
+          setTileStatus((current) => current === "ok" ? "ok" : "error")
+        })
+        tileLayer.addTo(map)
+
+        const layer = clusteringAvailable
+          ? L.markerClusterGroup({
+              chunkedLoading: true,
+              chunkInterval: 100,
+              chunkDelay: 25,
+              maxClusterRadius: 60,
+              showCoverageOnHover: false,
+              spiderfyOnMaxZoom: true,
+            }).addTo(map)
+          : L.layerGroup().addTo(map)
 
         mapRef.current = map
         layerRef.current = layer
-
-        // IMPORTANT:
-        // Tell React that Leaflet is now ready.
         setMapReady(true)
 
-        setTimeout(() => {
-          map.invalidateSize()
+        map.on("moveend", scheduleViewportLoad)
+
+        window.setTimeout(() => {
+          if (mapRef.current === map) {
+            map.invalidateSize()
+            load(map.getBounds())
+          }
         }, 100)
       })
       .catch((err) => {
         console.error("Leaflet error:", err)
-
         setError(
           "Map service could not be loaded. Check internet access and refresh."
         )
@@ -248,16 +341,21 @@ export default function GIS() {
 
     return () => {
       cancelled = true
+      if (debounceRef.current) clearTimeout(debounceRef.current)
+      requestRef.current?.abort()
 
-      if (mapRef.current) {
+      if (mapInstance) {
+        mapInstance.off("moveend", scheduleViewportLoad)
+        mapInstance.remove()
+      } else if (mapRef.current) {
         mapRef.current.remove()
-        mapRef.current = null
       }
 
+      mapRef.current = null
       layerRef.current = null
       setMapReady(false)
     }
-  }, [administrative])
+  }, [administrative, load, scheduleViewportLoad])
 
   // ---------------------------------------------------------
   // FILTER PROJECTS
@@ -306,11 +404,6 @@ export default function GIS() {
     if (!showMarkers) {
       return
     }
-
-    console.log(
-      "Rendering GIS markers:",
-      filtered.length
-    )
 
     filtered.forEach((item) => {
       const color =
@@ -465,9 +558,7 @@ export default function GIS() {
           </h1>
 
           <p className="mt-2 max-w-3xl text-sm leading-6 text-muted sm:text-base">
-            Live PostGIS project locations with
-            OpenStreetMap tiles and model risk markers
-            across India.
+PostGIS project locations with OpenStreetMap tiles. Project markers load for the visible map area as you pan and zoom.
           </p>
         </div>
 
@@ -495,6 +586,12 @@ export default function GIS() {
         </div>
       )}
 
+      {tileStatus === "error" && (
+        <div className="mb-5 rounded-lg border border-amber-200 bg-amber-50 px-5 py-4 text-sm text-amber-800">
+          OpenStreetMap tiles are not loading. Check your connection or retry shortly. Project data and map tiles are separate services.
+        </div>
+      )}
+
       {/* STATS */}
 
       <div className="mb-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -502,7 +599,7 @@ export default function GIS() {
         <Stat
           title="Mapped Projects"
           value={items.length}
-          description="Projects with valid coordinates"
+          description="Projects loaded in current map view"
         />
 
         <Stat
@@ -514,7 +611,7 @@ export default function GIS() {
         <Stat
           title="Visible Markers"
           value={filtered.length}
-          description="Current filter result"
+          description="Loaded projects matching filters"
         />
 
         <Stat
@@ -544,7 +641,7 @@ export default function GIS() {
               onChange={(e) =>
                 setSearch(e.target.value)
               }
-              placeholder="Search project or location"
+              placeholder="Search loaded projects or location"
               className="h-11 w-full rounded-lg border border-border bg-white pl-11 pr-4 text-sm outline-none focus:border-saffron"
             />
           </div>
@@ -685,9 +782,14 @@ export default function GIS() {
               </div>
 
               <p className="mt-1 text-xs text-muted">
-                {filtered.length} visible project
-                {filtered.length === 1 ? "" : "s"}
+                {filtered.length} loaded project{filtered.length === 1 ? "" : "s"}
+                {loading ? " · Updating…" : ""}
               </p>
+              {hasMore && (
+                <p className="mt-1 max-w-[220px] text-xs text-amber-700">
+                  More projects exist in this area. Zoom in to load a smaller area.
+                </p>
+              )}
 
             </div>
 
