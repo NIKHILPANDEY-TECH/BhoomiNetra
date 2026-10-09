@@ -10,7 +10,7 @@ import {
 } from "lucide-react"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Link } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { api } from "../lib/api"
 
 const CENTER = [22.5, 79]
@@ -139,7 +139,9 @@ function normalize(response) {
     ? payload
     : Array.isArray(payload?.data)
       ? payload.data
-      : []
+      : payload && Number.isFinite(Number(payload.latitude)) && Number.isFinite(Number(payload.longitude))
+        ? [payload]
+        : []
 
   return data
     .map((x) => ({
@@ -161,6 +163,8 @@ export default function GIS() {
   const [selected, setSelected] = useState(null)
 
   const [search, setSearch] = useState("")
+  const [searchResults, setSearchResults] = useState([])
+  const [searchLoading, setSearchLoading] = useState(false)
   const [riskFilter, setRiskFilter] = useState("ALL")
 
   const [showFilters, setShowFilters] = useState(false)
@@ -180,7 +184,13 @@ export default function GIS() {
   const layerRef = useRef(null)
   const requestRef = useRef(null)
   const debounceRef = useRef(null)
+  const searchTimerRef = useRef(null)
+  const searchRequestRef = useRef(null)
   const loadSequenceRef = useRef(0)
+  const selectedProjectRef = useRef(null)
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const selectedProjectId = searchParams.get("project")
 
   const role = localStorage.getItem("bhoomiRole")
 
@@ -226,12 +236,18 @@ export default function GIS() {
       if (controller.signal.aborted || requestSequence !== loadSequenceRef.current) return
 
       const data = normalize(response)
-      setItems(data)
+      setItems(() => {
+        const pinned = selectedProjectRef.current
+        if (pinned && !data.some((x) => x.project_id === pinned.project_id)) {
+          return [...data, pinned]
+        }
+        return data
+      })
       setHasMore(Boolean(response?.has_more))
 
       setSelected((current) =>
         current
-          ? data.find((x) => x.project_id === current.project_id) || null
+          ? data.find((x) => x.project_id === current.project_id) || current
           : null
       )
     } catch (err) {
@@ -258,6 +274,79 @@ export default function GIS() {
       if (mapRef.current) load(mapRef.current.getBounds())
     }, 300)
   }, [load])
+
+  // Global project search: searches all authorized projects, not only loaded markers.
+  useEffect(() => {
+    const term = search.trim()
+    if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+    searchRequestRef.current?.abort()
+
+    if (term.length < 2) {
+      setSearchResults([])
+      setSearchLoading(false)
+      return
+    }
+
+    searchTimerRef.current = setTimeout(async () => {
+      const controller = new AbortController()
+      searchRequestRef.current = controller
+      setSearchLoading(true)
+      try {
+        const response = await api.get(
+          `/api/projects?search=${encodeURIComponent(term)}&page=1&limit=8`,
+          { signal: controller.signal }
+        )
+        if (!controller.signal.aborted) {
+          setSearchResults(Array.isArray(response?.data) ? response.data : [])
+        }
+      } catch (err) {
+        if (err?.name !== "AbortError" && !controller.signal.aborted) {
+          setSearchResults([])
+        }
+      } finally {
+        if (!controller.signal.aborted) setSearchLoading(false)
+      }
+    }, 250)
+
+    return () => {
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
+      searchRequestRef.current?.abort()
+    }
+  }, [search])
+
+  // Fetch and focus a project even when it is outside the current map viewport.
+  useEffect(() => {
+    if (!selectedProjectId) {
+      selectedProjectRef.current = null
+      return
+    }
+    if (!mapReady) return
+
+    const controller = new AbortController()
+    api.get(`/api/gis/projects/${encodeURIComponent(selectedProjectId)}`, { signal: controller.signal })
+      .then((response) => {
+        if (controller.signal.aborted) return
+        const project = normalize(response)[0]
+        if (!project) throw new Error("This project has no valid mapped coordinates.")
+        selectedProjectRef.current = project
+        setItems((current) => [
+          ...current.filter((item) => item.project_id !== project.project_id),
+          project,
+        ])
+        setSelected(project)
+        setSearchResults([])
+        mapRef.current?.setView(
+          [project.latitude, project.longitude],
+          Math.max(mapRef.current?.getZoom() || 5, 12),
+          { animate: true, duration: 0.7 }
+        )
+      })
+      .catch((err) => {
+        if (err?.name === "AbortError" || controller.signal.aborted) return
+        setError(err?.data?.detail || err?.message || "Unable to locate this project on the map.")
+      })
+    return () => controller.abort()
+  }, [mapReady, selectedProjectId])
 
   // ---------------------------------------------------------
   // INITIALIZE LEAFLET, TILE STATUS, CLUSTERING AND VIEWPORT LOAD
@@ -342,7 +431,9 @@ export default function GIS() {
     return () => {
       cancelled = true
       if (debounceRef.current) clearTimeout(debounceRef.current)
+      if (searchTimerRef.current) clearTimeout(searchTimerRef.current)
       requestRef.current?.abort()
+      searchRequestRef.current?.abort()
 
       if (mapInstance) {
         mapInstance.off("moveend", scheduleViewportLoad)
@@ -364,7 +455,11 @@ export default function GIS() {
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase()
 
-    return items.filter((x) => {
+    const mapItems = selected && !items.some((item) => item.project_id === selected.project_id)
+      ? [...items, selected]
+      : items
+
+    return mapItems.filter((x) => {
       const riskOk =
         riskFilter === "ALL" ||
         x.risk_band === riskFilter
@@ -381,7 +476,7 @@ export default function GIS() {
 
       return riskOk && (!q || hay.includes(q))
     })
-  }, [items, search, riskFilter])
+  }, [items, search, riskFilter, selected])
 
   // ---------------------------------------------------------
   // RENDER MAP MARKERS
@@ -563,7 +658,7 @@ PostGIS project locations with OpenStreetMap tiles. Project markers load for the
         </div>
 
         <button
-          onClick={load}
+          onClick={() => load()}
           disabled={loading}
           className="inline-flex h-10 items-center justify-center gap-2 rounded-lg border border-border px-4 text-sm font-semibold disabled:opacity-50"
         >
@@ -638,12 +733,34 @@ PostGIS project locations with OpenStreetMap tiles. Project markers load for the
 
             <input
               value={search}
-              onChange={(e) =>
-                setSearch(e.target.value)
-              }
-              placeholder="Search loaded projects or location"
+              onChange={(e) => setSearch(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && searchResults[0]) {
+                  e.preventDefault()
+                  navigate(`/gis?project=${encodeURIComponent(searchResults[0].public_id)}`)
+                }
+                if (e.key === "Escape") setSearchResults([])
+              }}
+              placeholder="Search any project ID or name"
+              aria-label="Search all projects by ID or name"
               className="h-11 w-full rounded-lg border border-border bg-white pl-11 pr-4 text-sm outline-none focus:border-saffron"
             />
+            {search.trim().length >= 2 && (searchLoading || searchResults.length > 0) && (
+              <div className="absolute left-0 right-0 top-full z-[1000] mt-1 max-h-72 overflow-y-auto rounded-lg border border-border bg-white shadow-lg">
+                {searchLoading && <p className="px-4 py-3 text-sm text-muted">Searching all projects…</p>}
+                {searchResults.map((project) => (
+                  <button
+                    key={project.public_id}
+                    type="button"
+                    onClick={() => navigate(`/gis?project=${encodeURIComponent(project.public_id)}`)}
+                    className="block w-full border-t border-border px-4 py-3 text-left first:border-t-0 hover:bg-orange-50"
+                  >
+                    <span className="block text-sm font-semibold text-text">{project.project_name}</span>
+                    <span className="mt-1 block text-xs text-muted">{project.public_id} · {project.district}, {project.state}</span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-2 gap-3 sm:flex">
@@ -882,13 +999,14 @@ PostGIS project locations with OpenStreetMap tiles. Project markers load for the
                         to={`/projects/${selected.project_id}`}
                         className="font-semibold hover:text-saffron"
                       >
-                        {selected.project_id}
+                        {selected.project_name || selected.project_id}
                       </Link>
-
+                      <p className="mt-1 text-xs text-muted">{selected.project_id}</p>
+                      {(selected.district || selected.state) && (
+                        <p className="mt-1 text-xs text-muted">{[selected.district, selected.state].filter(Boolean).join(", ")}</p>
+                      )}
                       <p className="mt-1 text-xs text-muted">
-                        {selected.latitude.toFixed(5)},
-                        {" "}
-                        {selected.longitude.toFixed(5)}
+                        {selected.latitude.toFixed(5)}, {selected.longitude.toFixed(5)}
                       </p>
 
                     </div>
