@@ -19,6 +19,7 @@ def gis(
     max_lat: float = Query(37.0),
     min_lng: float = Query(68.0),
     max_lng: float = Query(98.0),
+    limit: int = Query(500, ge=1, le=1000),
     user=Depends(require_permission("PROJECT_READ")),
     db: Session = Depends(get_db),
 ):
@@ -120,11 +121,29 @@ def gis(
     query = visible(query, user)
 
     # ---------------------------------------------------------
-    # 6. Limit response size for fast GIS rendering
+    # 6. Limit response size for fast GIS rendering.
+    # Sort nearer to the current viewport center first so a broad
+    # initial view returns geographically relevant records.
+    # Fetch one extra row to tell the frontend whether to zoom in.
     # ---------------------------------------------------------
-    query = query.limit(5000)
+    viewport_center = cast(
+        func.ST_SetSRID(
+            func.ST_MakePoint(
+                (min_lng + max_lng) / 2,
+                (min_lat + max_lat) / 2,
+            ),
+            4326,
+        ),
+        Geography(geometry_type="POINT", srid=4326),
+    )
+
+    query = query.order_by(
+        func.ST_Distance(Project.location, viewport_center)
+    ).limit(limit + 1)
 
     rows = db.execute(query).all()
+    has_more = len(rows) > limit
+    rows = rows[:limit]
 
     # ---------------------------------------------------------
     # 7. Convert DB rows to frontend format
@@ -147,6 +166,7 @@ def gis(
                 "latitude": float(row.latitude),
                 "longitude": float(row.longitude),
                 "risk": risk,
+                "risk_probability": risk,
                 "risk_band": risk_band,
             }
         )
