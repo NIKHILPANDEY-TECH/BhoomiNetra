@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from geoalchemy2.elements import WKTElement
-from sqlalchemy import Integer, cast, func, select
+from sqlalchemy import Integer, cast, func, select, or_, asc, desc
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import project_scope, require_permission
@@ -147,7 +147,7 @@ def create(
 @router.get("")
 def list_projects(
     page: int = Query(1, ge=1),
-    limit: int = Query(20, ge=1, le=100),
+    limit: int = Query(50, ge=1, le=100),
     state: str | None = None,
     district: str | None = None,
     project_type: str | None = None,
@@ -155,79 +155,121 @@ def list_projects(
     status: str | None = None,
     risk_band: str | None = None,
     search: str | None = None,
+    sort_by: str = Query("created_at"),
+    sort_order: str = Query("desc"),
     user=Depends(require_permission("PROJECT_READ")),
     db: Session = Depends(get_db),
 ):
-    q = select(Project).where(Project.is_archived.is_(False))
-    q = visible(q, user)
+    """Return one page of projects with database-side filtering and sorting."""
+    allowed_sort_fields = {
+        "created_at": Project.created_at,
+        "project_name": Project.project_name,
+        "state": Project.state,
+        "district": Project.district,
+        "status": Project.status,
+        "current_stage": Project.current_stage,
+        "risk_probability": None,
+        "predicted_delay_days": None,
+    }
+    if sort_by not in allowed_sort_fields:
+        raise HTTPException(status_code=422, detail="Unsupported sort field")
+    if sort_order.lower() not in ("asc", "desc"):
+        raise HTTPException(status_code=422, detail="sort_order must be asc or desc")
 
-    if state:
-        q = q.where(Project.state == state)
-
-    if district:
-        q = q.where(Project.district == district)
-
-    if project_type:
-        q = q.where(Project.project_type == project_type)
-
-    if current_stage:
-        q = q.where(Project.current_stage == current_stage)
-
-    if status:
-        q = q.where(Project.status == status)
-
-    if search:
-        q = q.where(Project.project_name.ilike(f"%{search}%"))
-
-    if risk_band:
-        latest_prediction = (
-            select(
-                Prediction.project_id,
-                Prediction.risk_band,
-                func.row_number()
-                .over(
-                    partition_by=Prediction.project_id,
-                    order_by=Prediction.created_at.desc(),
-                )
-                .label("row_number"),
+    latest_prediction = (
+        select(
+            Prediction.project_id.label("project_id"),
+            Prediction.risk_probability.label("risk_probability"),
+            Prediction.risk_band.label("risk_band"),
+            Prediction.predicted_delay_days.label("predicted_delay_days"),
+            func.row_number()
+            .over(
+                partition_by=Prediction.project_id,
+                order_by=Prediction.created_at.desc(),
             )
-            .subquery()
-        )
-
-        q = q.join(
-            latest_prediction,
-            latest_prediction.c.project_id == Project.id,
-        ).where(
-            latest_prediction.c.row_number == 1,
-            latest_prediction.c.risk_band == risk_band,
-        )
-
-    total = db.scalar(
-        select(func.count()).select_from(q.subquery())
+            .label("row_number"),
+        ).subquery()
     )
 
+    q = select(Project).where(Project.is_archived.is_(False))
+    q = visible(q, user).outerjoin(
+        latest_prediction,
+        (latest_prediction.c.project_id == Project.id)
+        & (latest_prediction.c.row_number == 1),
+    )
+
+    if state:
+        q = q.where(Project.state.ilike(f"%{state.strip()}%"))
+    if district:
+        q = q.where(Project.district.ilike(f"%{district.strip()}%"))
+    if project_type:
+        q = q.where(Project.project_type == project_type)
+    if current_stage:
+        q = q.where(Project.current_stage.ilike(f"%{current_stage.strip()}%"))
+    if status:
+        q = q.where(Project.status == status)
+    if search:
+        term = f"%{search.strip()}%"
+        q = q.where(or_(Project.project_name.ilike(term), Project.public_id.ilike(term)))
+    if risk_band:
+        if risk_band.upper() == "UNSCORED":
+            q = q.where(latest_prediction.c.project_id.is_(None))
+        else:
+            q = q.where(latest_prediction.c.risk_band == risk_band.upper())
+
+    total = db.scalar(select(func.count()).select_from(q.order_by(None).subquery())) or 0
+    sort_column = allowed_sort_fields[sort_by]
+    if sort_by == "risk_probability":
+        sort_column = latest_prediction.c.risk_probability
+    elif sort_by == "predicted_delay_days":
+        sort_column = latest_prediction.c.predicted_delay_days
+    sort_expression = asc(sort_column) if sort_order.lower() == "asc" else desc(sort_column)
+
     projects = db.execute(
-        q.order_by(Project.created_at.desc())
+        q.order_by(sort_expression.nullslast(), Project.public_id.asc())
         .offset((page - 1) * limit)
         .limit(limit)
     ).scalars().all()
 
+    page_ids = [project.id for project in projects]
+    prediction_rows = []
+    if page_ids:
+        prediction_rows = db.execute(
+            select(
+                latest_prediction.c.project_id,
+                latest_prediction.c.risk_probability,
+                latest_prediction.c.risk_band,
+                latest_prediction.c.predicted_delay_days,
+            ).where(
+                latest_prediction.c.row_number == 1,
+                latest_prediction.c.project_id.in_(page_ids),
+            )
+        ).all()
+    prediction_by_project = {row.project_id: row for row in prediction_rows}
+
+    data = []
+    for project in projects:
+        prediction = prediction_by_project.get(project.id)
+        data.append({
+            "id": str(project.id),
+            "public_id": project.public_id,
+            "project_name": project.project_name,
+            "state": project.state,
+            "district": project.district,
+            "project_type": project.project_type,
+            "status": project.status,
+            "current_stage": project.current_stage,
+            "risk_probability": float(prediction.risk_probability) if prediction and prediction.risk_probability is not None else None,
+            "risk_band": prediction.risk_band if prediction else "UNSCORED",
+            "predicted_delay_days": float(prediction.predicted_delay_days) if prediction and prediction.predicted_delay_days is not None else None,
+        })
+
     return {
-        "data": [
-            {
-                "id": str(project.id),
-                "public_id": project.public_id,
-                "project_name": project.project_name,
-                "state": project.state,
-                "district": project.district,
-                "status": project.status,
-                "current_stage": project.current_stage,
-            }
-            for project in projects
-        ],
+        "data": data,
         "page": page,
         "limit": limit,
         "total": total,
+        "total_pages": (total + limit - 1) // limit,
         "message": "Success",
     }
 

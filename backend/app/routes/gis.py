@@ -2,12 +2,14 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import cast, func, select
 from sqlalchemy.orm import Session
 from geoalchemy2 import Geometry, Geography
+from geoalchemy2.shape import to_shape
+from fastapi import HTTPException
 
 from app.core.dependencies import require_permission
 from app.database.database import get_db
 from app.models.project import Project
 from app.models.prediction import Prediction
-from app.routes.projects import visible
+from app.routes.projects import visible, get_project
 
 
 router = APIRouter(prefix="/api/gis", tags=["GIS"])
@@ -91,6 +93,9 @@ def gis(
     query = (
         select(
             Project.public_id.label("project_id"),
+            Project.project_name.label("project_name"),
+            Project.state.label("state"),
+            Project.district.label("district"),
             latitude,
             longitude,
             latest_prediction.c.risk_probability,
@@ -163,6 +168,9 @@ def gis(
         output.append(
             {
                 "project_id": row.project_id,
+                "project_name": row.project_name,
+                "state": row.state,
+                "district": row.district,
                 "latitude": float(row.latitude),
                 "longitude": float(row.longitude),
                 "risk": risk,
@@ -173,5 +181,43 @@ def gis(
 
     return {
         "data": output,
+        "has_more": has_more,
+        "limit": limit,
         "message": "Success",
+    }
+
+@router.get("/projects/{project_id}")
+def gis_project_detail(
+    project_id: str,
+    user=Depends(require_permission("PROJECT_READ")),
+    db: Session = Depends(get_db),
+):
+    """Return map-ready data for one project, even outside the current viewport."""
+    project = get_project(db, project_id, user)
+    if project.location is None:
+        raise HTTPException(status_code=404, detail="Project has no mapped coordinates")
+
+    point = to_shape(project.location)
+    prediction = db.execute(
+        select(Prediction)
+        .where(Prediction.project_id == project.id)
+        .order_by(Prediction.created_at.desc())
+        .limit(1)
+    ).scalars().first()
+
+    risk_probability = (
+        float(prediction.risk_probability)
+        if prediction and prediction.risk_probability is not None
+        else None
+    )
+    return {
+        "project_id": project.public_id,
+        "project_name": project.project_name,
+        "state": project.state,
+        "district": project.district,
+        "latitude": float(point.y),
+        "longitude": float(point.x),
+        "risk": risk_probability,
+        "risk_probability": risk_probability,
+        "risk_band": prediction.risk_band if prediction else "UNSCORED",
     }
