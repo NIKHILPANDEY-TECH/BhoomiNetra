@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.database.database import init_db
 from app.services.ml_service import MLServiceUnavailable, ml_service
-from app.routes import auth, users, projects, predictions, explanations, simulation, recommendations, dashboard, gis, alerts, interventions, data_import, admin, audit, reports
+from app.routes import auth, users, projects, predictions, explanations, simulation, recommendations, dashboard, gis, alerts, interventions, data_import, admin, audit, reports, citizen
 
 
 @asynccontextmanager
@@ -62,7 +62,7 @@ async def unhandled(request: Request, exc: Exception):
     )
 
 
-for router in [auth.router, users.router, projects.router, predictions.router, explanations.router, simulation.router, recommendations.router, dashboard.router, gis.router, alerts.router, interventions.router, data_import.router, admin.router, audit.router, reports.router]:
+for router in [auth.router, users.router, projects.router, predictions.router, explanations.router, simulation.router, recommendations.router, dashboard.router, gis.router, alerts.router, interventions.router, data_import.router, admin.router, audit.router, reports.router, citizen.router]:
     app.include_router(router)
 
 
