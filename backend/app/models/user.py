@@ -17,3 +17,5 @@ class User(Base):
     district_id:Mapped[uuid.UUID|None]=mapped_column(ForeignKey("jurisdictions.id"),nullable=True,index=True)
     created_at:Mapped[datetime]=mapped_column(DateTime(timezone=True),default=datetime.utcnow)
     role=relationship("Role",lazy="joined")
+    state_jurisdiction=relationship("Jurisdiction",foreign_keys=[state_id],lazy="joined")
+    district_jurisdiction=relationship("Jurisdiction",foreign_keys=[district_id],lazy="joined")
