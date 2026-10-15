@@ -24,20 +24,23 @@ role_map={
  "DISTRICT_ANALYST":["PROJECT_READ","PREDICTION_VIEW","SHAP_VIEW","SIMULATION_RUN","RECOMMENDATION_VIEW","REPORT_VIEW"],
  "PROJECT_OFFICER":["PROJECT_READ","PROJECT_UPDATE","PROJECT_SUBMIT","PREDICTION_RUN","PREDICTION_VIEW","SHAP_VIEW","SIMULATION_RUN","RECOMMENDATION_VIEW","INTERVENTION_CREATE"],
  "PROJECT_DATA_OPERATOR":["PROJECT_READ","PROJECT_CREATE","PROJECT_UPDATE","PROJECT_SUBMIT","PREDICTION_VIEW","DATA_IMPORT"],
- "SYSTEM_SECURITY_ADMIN":["USER_VIEW","USER_CREATE","USER_UPDATE","USER_DISABLE","ROLE_MANAGE","PERMISSION_MANAGE","AUDIT_VIEW","SECURITY_VIEW","MODEL_VIEW"]}
+ "SYSTEM_SECURITY_ADMIN":["USER_VIEW","USER_CREATE","USER_UPDATE","USER_DISABLE","ROLE_MANAGE","PERMISSION_MANAGE","AUDIT_VIEW","SECURITY_VIEW","MODEL_VIEW"],
+ "LOCAL_CITIZEN":["CITIZEN_PROJECT_READ","CITIZEN_REPORT_CREATE","CITIZEN_REPORT_VIEW"]}
 for name, names in role_map.items():
     role=db.query(Role).filter_by(name=name).first() or Role(name=name)
     db.add(role); db.flush(); role.permissions=[perm[n] for n in names]
 org=db.query(Organization).filter_by(name="BhoomiMitra Demo Organization").first() or Organization(name="BhoomiMitra Demo Organization"); db.add(org); db.flush()
 state=db.query(Jurisdiction).filter_by(name="Madhya Pradesh",level="STATE").first() or Jurisdiction(name="Madhya Pradesh",level="STATE"); db.add(state); db.flush()
 district=db.query(Jurisdiction).filter_by(name="Bhopal",level="DISTRICT").first() or Jurisdiction(name="Bhopal",level="DISTRICT",parent_id=state.id); db.add(district); db.flush()
-users=[("national.admin","NATIONAL_ADMIN","DEMO_PASSWORD_NATIONAL",None,None),("mp.state","STATE_ADMIN","DEMO_PASSWORD_STATE",state.id,None),("bhopal.district","DISTRICT_OFFICER","DEMO_PASSWORD_DISTRICT",state.id,district.id),("project.officer","PROJECT_OFFICER","DEMO_PASSWORD_PROJECT",state.id,district.id),("data.operator","PROJECT_DATA_OPERATOR","DEMO_PASSWORD_DATA",state.id,district.id)]
+mandsaur=db.query(Jurisdiction).filter_by(name="Mandsaur",level="DISTRICT").first() or Jurisdiction(name="Mandsaur",level="DISTRICT",parent_id=state.id); db.add(mandsaur); db.flush()
+users=[("national.admin","NATIONAL_ADMIN","DEMO_PASSWORD_NATIONAL",None,None),("mp.state","STATE_ADMIN","DEMO_PASSWORD_STATE",state.id,None),("bhopal.district","DISTRICT_OFFICER","DEMO_PASSWORD_DISTRICT",state.id,district.id),("project.officer","PROJECT_OFFICER","DEMO_PASSWORD_PROJECT",state.id,district.id),("data.operator","PROJECT_DATA_OPERATOR","DEMO_PASSWORD_DATA",state.id,district.id),("citizen.demo","LOCAL_CITIZEN","DEMO_PASSWORD_CITIZEN",state.id,mandsaur.id)]
 roles={r.name:r for r in db.query(Role).all()}
 for username, role, envkey, state_id, district_id in users:
-    password = os.environ.get(envkey, "ChangeMe-123!")
     u = db.query(User).filter_by(username=username).first()
+    configured_password = os.environ.get(envkey)
 
     if not u:
+        password = configured_password or ("CitizenDemo-2026!" if username == "citizen.demo" else "ChangeMe-123!")
         u = User(
             username=username,
             password_hash=hash_password(password),
@@ -48,7 +51,11 @@ for username, role, envkey, state_id, district_id in users:
         )
         db.add(u)
     else:
-        u.password_hash = hash_password(password)
+        # Do not unexpectedly reset existing staff demo passwords when seeding the citizen role.
+        # The citizen account is reset to its documented demo password unless overridden by env.
+        if configured_password or username == "citizen.demo":
+            password = configured_password or "CitizenDemo-2026!"
+            u.password_hash = hash_password(password)
         u.role_id = roles[role].id
         u.organization_id = org.id
         u.state_id = state_id
