@@ -9,5 +9,5 @@ def get_db():
     finally: db.close()
 def init_db():
     from app.database.base import Base
-    import app.models.user, app.models.role, app.models.permission, app.models.organization, app.models.jurisdiction, app.models.project, app.models.prediction, app.models.risk_history, app.models.recommendation, app.models.intervention, app.models.alert, app.models.audit_log
+    import app.models.user, app.models.role, app.models.permission, app.models.organization, app.models.jurisdiction, app.models.project, app.models.prediction, app.models.risk_history, app.models.recommendation, app.models.intervention, app.models.alert, app.models.audit_log, app.models.citizen_report
     Base.metadata.create_all(bind=engine)
