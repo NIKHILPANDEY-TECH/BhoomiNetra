@@ -34,6 +34,10 @@ const DEMO_ROLES = [
     value: "data_operator",
     label: "Data Operator",
   },
+  {
+    value: "local_citizen",
+    label: "Local Citizen (Mandsaur demo area)",
+  },
 ];
 
 export default function Login() {
