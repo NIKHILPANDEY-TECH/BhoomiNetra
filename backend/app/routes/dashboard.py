@@ -29,7 +29,7 @@ def latest_predictions():
 
 
 @router.get("/summary")
-def summary(user=Depends(require_permission("REPORT_VIEW")), db: Session = Depends(get_db)):
+def summary(user=Depends(require_permission("PROJECT_READ")), db: Session = Depends(get_db)):
     base = visible(select(Project).where(Project.is_archived.is_(False)), user).subquery()
     total = db.scalar(select(func.count()).select_from(base)) or 0
     active = db.scalar(select(func.count()).select_from(base).where(base.c.status == "ACTIVE")) or 0
@@ -37,7 +37,7 @@ def summary(user=Depends(require_permission("REPORT_VIEW")), db: Session = Depen
 
 
 @router.get("/risk-distribution")
-def risk(user=Depends(require_permission("REPORT_VIEW")), db: Session = Depends(get_db)):
+def risk(user=Depends(require_permission("PREDICTION_VIEW")), db: Session = Depends(get_db)):
     latest = latest_predictions()
     query = visible(
         select(latest.c.risk_band, func.count())
