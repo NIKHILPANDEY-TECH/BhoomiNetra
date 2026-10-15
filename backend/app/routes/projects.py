@@ -2,7 +2,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from geoalchemy2.elements import WKTElement
-from sqlalchemy import Integer, cast, func, select, or_, asc, desc
+from sqlalchemy import Integer, cast, func, select, or_, asc, desc, and_, false
 from sqlalchemy.orm import Session
 
 from app.core.dependencies import project_scope, require_permission
@@ -34,6 +34,19 @@ def visible(q, user):
 
     if role == "PROJECT_OFFICER":
         return q.where(Project.assigned_user_id == user.id)
+
+    if role == "LOCAL_CITIZEN":
+        district = getattr(user, "district_jurisdiction", None)
+        state = getattr(user, "state_jurisdiction", None)
+        if not user.district_id:
+            return q.where(false())
+        conditions = [Project.district_id == user.district_id]
+        if district and state:
+            conditions.append(and_(
+                func.lower(func.trim(Project.district)) == district.name.strip().lower(),
+                func.lower(func.trim(Project.state)) == state.name.strip().lower(),
+            ))
+        return q.where(or_(*conditions))
 
     return q.where(Project.organization_id == user.organization_id)
 
