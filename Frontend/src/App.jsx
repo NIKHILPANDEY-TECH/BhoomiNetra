@@ -20,6 +20,7 @@ import { createPortal } from "react-dom"
 import ImageCarousel from "./components/ImageCarousel"
 import logo from "./assets/bhoomi-netra-logo.jpeg"
 import { api, clearSession } from "./lib/api"
+import CitizenDashboard from "./pages/citizen/CitizenDashboard"
 
 
 function Dashboard() {
@@ -204,8 +205,8 @@ export default function App() {
     localStorage.getItem("bhoomiBackendRole") ||
     "PROJECT_OFFICER"
 
-  const isAdmin =
-    backendRole === "NATIONAL_ADMIN"
+  const isAdmin = backendRole === "NATIONAL_ADMIN"
+  const isCitizen = backendRole === "LOCAL_CITIZEN"
 
   /*
    * Roles that have recommendation access.
@@ -234,7 +235,7 @@ export default function App() {
    * Recommendations is intentionally NOT inside More.
    * It is now a permanent navigation item.
    */
-  const moreItems = isAdmin
+  const moreItems = isCitizen ? [] : (isAdmin
     ? [
         "/high-risk",
         "/risk-analysis",
@@ -243,25 +244,12 @@ export default function App() {
         "/analytics",
         "/reports",
         "/audit-logs",
-      ].map((path) => ({
-        path,
-        label: path
-          .slice(1)
-          .replaceAll("-", " ")
-          .replace(/\b\w/g, (c) => c.toUpperCase()),
-      }))
-    : [
-        "/risk-analysis",
-        "/stage-prediction",
-        "/what-if",
-        "/reports",
-      ].map((path) => ({
-        path,
-        label: path
-          .slice(1)
-          .replaceAll("-", " ")
-          .replace(/\b\w/g, (c) => c.toUpperCase()),
-      }))
+      ]
+    : ["/risk-analysis", "/stage-prediction", "/what-if", "/reports"]
+  ).map((path) => ({
+    path,
+    label: path.slice(1).replaceAll("-", " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+  }))
 
 
   const logout = async () => {
@@ -316,7 +304,7 @@ export default function App() {
                     e.currentTarget.value.trim()
                   ) {
                     navigate(
-                      `/projects?search=${encodeURIComponent(
+                      `${isCitizen ? "/citizen/projects" : "/projects"}?search=${encodeURIComponent(
                         e.currentTarget.value.trim()
                       )}`
                     )
@@ -331,28 +319,23 @@ export default function App() {
 
           <div className="ml-auto flex items-center gap-3 sm:gap-5">
 
-            <Link
-              to="/alerts"
-              className="flex items-center gap-2 text-sm font-medium"
-            >
-              <Bell size={18} />
-
-              <span className="hidden sm:inline">
-                Notifications
-              </span>
-            </Link>
-
-
-            <Link
-              to="/settings"
-              className="flex items-center gap-2 text-sm font-medium"
-            >
-              <Settings size={18} />
-
-              <span className="hidden sm:inline">
-                Settings
-              </span>
-            </Link>
+            {isCitizen ? (
+              <Link to="/citizen/reports" className="flex items-center gap-2 text-sm font-medium">
+                <Bell size={18} />
+                <span className="hidden sm:inline">My reports</span>
+              </Link>
+            ) : (
+              <>
+                <Link to="/alerts" className="flex items-center gap-2 text-sm font-medium">
+                  <Bell size={18} />
+                  <span className="hidden sm:inline">Notifications</span>
+                </Link>
+                <Link to="/settings" className="flex items-center gap-2 text-sm font-medium">
+                  <Settings size={18} />
+                  <span className="hidden sm:inline">Settings</span>
+                </Link>
+              </>
+            )}
 
 
             <button
@@ -393,19 +376,26 @@ export default function App() {
 
 
           <NavLink
-            to="/projects"
-            active={location.pathname.startsWith("/projects")}
+            to={isCitizen ? "/citizen/projects" : "/projects"}
+            active={location.pathname.startsWith(isCitizen ? "/citizen/projects" : "/projects")}
           >
-            {isAdmin ? "Projects" : "My Projects"}
+            {isCitizen ? "My Area Projects" : isAdmin ? "Projects" : "My Projects"}
           </NavLink>
 
 
-          {isAdmin && (
-            <NavLink
-              to="/gis"
-              active={location.pathname === "/gis"}
-            >
+          {isCitizen ? (
+            <NavLink to="/citizen/map" active={location.pathname === "/citizen/map"}>
+              Area Map
+            </NavLink>
+          ) : isAdmin && (
+            <NavLink to="/gis" active={location.pathname === "/gis"}>
               GIS
+            </NavLink>
+          )}
+
+          {isCitizen && (
+            <NavLink to="/citizen/reports" active={location.pathname === "/citizen/reports"}>
+              My Reports
             </NavLink>
           )}
 
@@ -424,7 +414,7 @@ export default function App() {
 
           {/* MORE */}
 
-          <div className="relative shrink-0">
+          {!isCitizen && <div className="relative shrink-0">
 
             <button
               ref={moreRef}
@@ -455,7 +445,7 @@ export default function App() {
               />
             </button>
 
-          </div>
+          </div>}
 
 
           <NavLink
@@ -472,7 +462,7 @@ export default function App() {
 
       {/* MORE DROPDOWN */}
 
-      {moreOpen &&
+      {moreOpen && !isCitizen &&
         createPortal(
           <div
             className="fixed z-[9999] w-56 rounded-lg border border-border bg-white py-2 shadow-xl"
@@ -501,7 +491,7 @@ export default function App() {
       {/* CONTENT */}
 
       {location.pathname === "/dashboard" ? (
-        <Dashboard />
+        isCitizen ? <CitizenDashboard /> : <Dashboard />
       ) : (
         <main className="min-h-[calc(100vh-132px)] bg-page">
           <Outlet />

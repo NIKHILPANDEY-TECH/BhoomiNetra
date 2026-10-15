@@ -5,6 +5,8 @@ import {
   Navigate,
   Route,
   Routes,
+  useLocation,
+  useParams,
 } from "react-router-dom"
 
 import "./index.css"
@@ -27,6 +29,10 @@ import AuditLogs from "./pages/audit-logs.jsx"
 import Settings from "./pages/settings.jsx"
 import Help from "./pages/help.jsx"
 import HighRisk from "./pages/high-risk.jsx"
+import CitizenProjects from "./pages/citizen/CitizenProjects.jsx"
+import CitizenProjectDetails from "./pages/citizen/CitizenProjectDetails.jsx"
+import CitizenMap from "./pages/citizen/CitizenMap.jsx"
+import CitizenReports from "./pages/citizen/CitizenReports.jsx"
 
 class ErrorBoundary extends Component {
   constructor(props) {
@@ -144,13 +150,34 @@ function Protected({ children }) {
 }
 
 function AdminOnly({ children }) {
-  const role = localStorage.getItem(
-    "bhoomiBackendRole"
-  )
+  const role = localStorage.getItem("bhoomiBackendRole")
+  return role === "NATIONAL_ADMIN" ? children : <Navigate to="/dashboard" replace />
+}
 
-  return role === "NATIONAL_ADMIN"
-    ? children
-    : <Navigate to="/dashboard" replace />
+function StaffOnly({ children }) {
+  const role = localStorage.getItem("bhoomiBackendRole")
+  return role === "LOCAL_CITIZEN" ? <Navigate to="/dashboard" replace /> : children
+}
+
+function CitizenOnly({ children }) {
+  const role = localStorage.getItem("bhoomiBackendRole")
+  return role === "LOCAL_CITIZEN" ? children : <Navigate to="/dashboard" replace />
+}
+
+function RoleAwareProjects() {
+  const role = localStorage.getItem("bhoomiBackendRole")
+  const location = useLocation()
+  return role === "LOCAL_CITIZEN"
+    ? <Navigate to={`/citizen/projects${location.search}`} replace />
+    : <Projects />
+}
+
+function RoleAwareProjectDetails() {
+  const role = localStorage.getItem("bhoomiBackendRole")
+  const { id } = useParams()
+  return role === "LOCAL_CITIZEN"
+    ? <Navigate to={`/citizen/projects/${encodeURIComponent(id)}`} replace />
+    : <ProjectDetails />
 }
 
 function NotFound() {
@@ -222,35 +249,18 @@ createRoot(
               element={null}
             />
 
-            <Route
-              path="projects"
-              element={<Projects />}
-            />
+            <Route path="projects" element={<RoleAwareProjects />} />
+            <Route path="projects/:id" element={<RoleAwareProjectDetails />} />
 
-            <Route
-              path="projects/:id"
-              element={<ProjectDetails />}
-            />
+            <Route path="citizen/projects" element={<CitizenOnly><CitizenProjects /></CitizenOnly>} />
+            <Route path="citizen/projects/:id" element={<CitizenOnly><CitizenProjectDetails /></CitizenOnly>} />
+            <Route path="citizen/map" element={<CitizenOnly><CitizenMap /></CitizenOnly>} />
+            <Route path="citizen/reports" element={<CitizenOnly><CitizenReports /></CitizenOnly>} />
 
-            <Route
-              path="risk-analysis"
-              element={<RiskAnalysis />}
-            />
-
-            <Route
-              path="stage-prediction"
-              element={<StagePrediction />}
-            />
-
-            <Route
-              path="recommendations"
-              element={<Recommendations />}
-            />
-
-            <Route
-              path="what-if"
-              element={<WhatIf />}
-            />
+            <Route path="risk-analysis" element={<StaffOnly><RiskAnalysis /></StaffOnly>} />
+            <Route path="stage-prediction" element={<StaffOnly><StagePrediction /></StaffOnly>} />
+            <Route path="recommendations" element={<StaffOnly><Recommendations /></StaffOnly>} />
+            <Route path="what-if" element={<StaffOnly><WhatIf /></StaffOnly>} />
 
             <Route
               path="high-risk"
@@ -281,7 +291,7 @@ createRoot(
 
             <Route
               path="reports"
-              element={<Reports />}
+              element={<StaffOnly><Reports /></StaffOnly>}
             />
 
             <Route
@@ -295,7 +305,7 @@ createRoot(
 
             <Route
               path="settings"
-              element={<Settings />}
+              element={<StaffOnly><Settings /></StaffOnly>}
             />
 
             <Route
@@ -305,7 +315,7 @@ createRoot(
 
             <Route
               path="alerts"
-              element={<Alerts />}
+              element={<StaffOnly><Alerts /></StaffOnly>}
             />
 
             <Route
