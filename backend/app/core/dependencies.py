@@ -19,11 +19,36 @@ def require_permission(permission):
         if not any(p.name==permission for p in user.role.permissions): raise HTTPException(403,"Permission denied")
         return user
     return dep
-def project_scope(project,user):
-    role=user.role.name
-    if role=="NATIONAL_ADMIN": return True
-    if role in ("STATE_ADMIN","STATE_ANALYST"): return project.state_id==user.state_id
-    if role in ("DIVISION_OFFICER",): return project.division_id==user.division_id
-    if role in ("DISTRICT_OFFICER","DISTRICT_ANALYST"): return project.district_id==user.district_id
-    if role=="PROJECT_OFFICER": return project.assigned_user_id==user.id
-    return project.organization_id==user.organization_id
+def require_citizen(permission):
+    """Require both the citizen role and the requested citizen permission."""
+    def dep(user=Depends(require_permission(permission))):
+        if user.role.name != "LOCAL_CITIZEN":
+            raise HTTPException(status_code=403, detail="Local citizen access only")
+        return user
+    return dep
+
+
+def project_scope(project, user):
+    role = user.role.name
+    if role == "NATIONAL_ADMIN":
+        return True
+    if role in ("STATE_ADMIN", "STATE_ANALYST"):
+        return project.state_id == user.state_id
+    if role == "DIVISION_OFFICER":
+        return project.division_id == user.division_id
+    if role in ("DISTRICT_OFFICER", "DISTRICT_ANALYST"):
+        return project.district_id == user.district_id
+    if role == "PROJECT_OFFICER":
+        return project.assigned_user_id == user.id
+    if role == "LOCAL_CITIZEN":
+        district = getattr(user, "district_jurisdiction", None)
+        state = getattr(user, "state_jurisdiction", None)
+        if project.district_id == user.district_id and user.district_id is not None:
+            return True
+        if not district or not state:
+            return False
+        return (
+            (project.district or "").strip().casefold() == district.name.strip().casefold()
+            and (project.state or "").strip().casefold() == state.name.strip().casefold()
+        )
+    return project.organization_id == user.organization_id
