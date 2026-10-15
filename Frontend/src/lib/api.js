@@ -1,6 +1,6 @@
 const API_BASE = (
   import.meta.env.VITE_API_BASE_URL ||
-  "https://bhoominetra-backend.onrender.com"
+  "https://bhoominetra-production-dc06.up.railway.app"
 ).replace(/\/$/, "")
 
 let refreshPromise = null
@@ -302,7 +302,9 @@ export async function loginDemo(role) {
     "bhoomiRole",
     me.role === "NATIONAL_ADMIN"
       ? "administrative"
-      : "project-manager"
+      : me.role === "LOCAL_CITIZEN"
+        ? "local-citizen"
+        : "project-manager"
   )
 
   localStorage.setItem(
@@ -314,14 +316,29 @@ export async function loginDemo(role) {
 }
 
 export async function login(
-  username,
+  usernameOrCredentials,
   password
 ) {
+  // Backward-compatible with the original login page, which calls
+  // login({ email, password }), while also supporting login(username, password).
+  const username =
+    typeof usernameOrCredentials === "object" && usernameOrCredentials !== null
+      ? (usernameOrCredentials.username || usernameOrCredentials.email || "")
+      : (usernameOrCredentials || "")
+  const actualPassword =
+    typeof usernameOrCredentials === "object" && usernameOrCredentials !== null
+      ? usernameOrCredentials.password
+      : password
+
+  if (!String(username).trim() || !actualPassword) {
+    throw new Error("Please enter your email/username and password.")
+  }
+
   const data = await api.post(
     "/api/auth/login",
     {
-      username,
-      password,
+      username: String(username).trim(),
+      password: actualPassword,
     }
   )
 
@@ -353,7 +370,9 @@ export async function login(
     "bhoomiRole",
     me.role === "NATIONAL_ADMIN"
       ? "administrative"
-      : "project-manager"
+      : me.role === "LOCAL_CITIZEN"
+        ? "local-citizen"
+        : "project-manager"
   )
 
   localStorage.setItem(
