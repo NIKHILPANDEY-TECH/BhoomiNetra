@@ -269,50 +269,45 @@ export const api = {
  * /api/auth/demo-login endpoint.
  */
 export async function loginDemo(role) {
-  const data = await api.post(
-    "/api/auth/demo-login",
-    { role }
-  )
+  // A failed /me request must not leave a half-authenticated session behind.
+  clearSession()
 
-  localStorage.setItem(
-    "bhoomiAccessToken",
-    data.access_token
-  )
+  try {
+    const data = await api.post(
+      "/api/auth/demo-login",
+      { role }
+    )
 
-  localStorage.setItem(
-    "bhoomiRefreshToken",
-    data.refresh_token
-  )
+    if (!data?.access_token || !data?.refresh_token) {
+      throw new Error("The demo-login endpoint returned an incomplete token response.")
+    }
 
-  const me = await api.get(
-    "/api/auth/me"
-  )
+    localStorage.setItem("bhoomiAccessToken", data.access_token)
+    localStorage.setItem("bhoomiRefreshToken", data.refresh_token)
 
-  localStorage.setItem(
-    "bhoomiBackendRole",
-    me.role
-  )
+    const me = await api.get("/api/auth/me")
 
-  localStorage.setItem(
-    "bhoomiUser",
-    JSON.stringify(me)
-  )
+    if (!me?.role || !me?.username) {
+      throw new Error("The backend did not return a valid demo-user profile.")
+    }
 
-  localStorage.setItem(
-    "bhoomiRole",
-    me.role === "NATIONAL_ADMIN"
-      ? "administrative"
-      : me.role === "LOCAL_CITIZEN"
-        ? "local-citizen"
-        : "project-manager"
-  )
+    localStorage.setItem("bhoomiBackendRole", me.role)
+    localStorage.setItem("bhoomiUser", JSON.stringify(me))
+    localStorage.setItem(
+      "bhoomiRole",
+      me.role === "NATIONAL_ADMIN"
+        ? "administrative"
+        : me.role === "LOCAL_CITIZEN"
+          ? "local-citizen"
+          : "project-manager"
+    )
+    localStorage.setItem("bhoomiEmail", me.username)
 
-  localStorage.setItem(
-    "bhoomiEmail",
-    me.username
-  )
-
-  return me
+    return me
+  } catch (error) {
+    clearSession()
+    throw error
+  }
 }
 
 export async function login(
