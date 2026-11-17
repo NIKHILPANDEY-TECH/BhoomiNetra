@@ -7,7 +7,7 @@ from io import BytesIO
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
-from sqlalchemy import select
+from sqlalchemy import select, or_
 from sqlalchemy.orm import Session, selectinload
 
 from app.core.dependencies import get_current_user, require_permission
@@ -17,6 +17,9 @@ from app.models.identity_verification import IdentityVerification
 from app.models.permission import Permission
 from app.models.role import Role
 from app.models.user import User
+from app.models.jurisdiction import Jurisdiction
+from app.models.organization import Organization
+from app.core.security import hash_password
 from app.services.audit_service import audit
 from app.services.ml_service import ml_service
 
@@ -68,12 +71,186 @@ def access_control(
             ],
             "users": [
                 {"id": str(item.id), "username": item.username, "email": item.email,
+                 "full_name": item.full_name, "phone": item.phone, "designation": item.designation,
+                 "department": item.department, "state_id": str(item.state_id) if item.state_id else None,
+                 "district_id": str(item.district_id) if item.district_id else None,
+                 "division_id": str(item.division_id) if item.division_id else None,
                  "role": item.role.name, "is_active": item.is_active}
                 for item in users
             ],
         },
         "message": "Success",
     }
+
+
+@router.get("/user-directory-options")
+def user_directory_options(
+    user=Depends(require_permission("USER_VIEW")),
+    db: Session = Depends(get_db),
+):
+    _national_admin(user)
+    roles = db.execute(select(Role).order_by(Role.name)).scalars().all()
+    jurisdictions = db.execute(select(Jurisdiction).order_by(Jurisdiction.level, Jurisdiction.name)).scalars().all()
+    organizations = db.execute(select(Organization).order_by(Organization.name)).scalars().all()
+    return {"data": {
+        "roles": [{"name": role.name} for role in roles],
+        "jurisdictions": [{"id": str(item.id), "name": item.name, "level": item.level,
+                           "parent_id": str(item.parent_id) if item.parent_id else None}
+                          for item in jurisdictions],
+        "organizations": [{"id": str(item.id), "name": item.name} for item in organizations],
+    }, "message": "Success"}
+
+
+@router.post("/users")
+def create_official_user(
+    body: dict,
+    request: Request,
+    user=Depends(require_permission("USER_CREATE")),
+    db: Session = Depends(get_db),
+):
+    _national_admin(user)
+    required = {"username", "full_name", "role", "password"}
+    missing = sorted(key for key in required if not str(body.get(key, "")).strip())
+    if missing:
+        raise HTTPException(status_code=422, detail=f"Required fields: {', '.join(missing)}")
+    username = str(body["username"]).strip()
+    email = str(body.get("email") or "").strip().lower() or None
+    if len(username) > 120 or len(str(body["full_name"])) > 180:
+        raise HTTPException(status_code=422, detail="Username or full name is too long")
+    if len(str(body["password"])) < 12:
+        raise HTTPException(status_code=422, detail="Temporary password must contain at least 12 characters")
+    duplicate_query = select(User).where(User.username == username)
+    if email:
+        duplicate_query = select(User).where(or_(User.username == username, User.email == email))
+    duplicate = db.execute(duplicate_query).scalars().first()
+    if duplicate:
+        raise HTTPException(status_code=409, detail="Username or email already exists")
+    role_name = str(body["role"]).strip().upper()
+    if role_name == "NATIONAL_ADMIN":
+        raise HTTPException(status_code=403, detail="Create additional National Admin accounts through a separately approved process")
+    role = db.execute(select(Role).where(Role.name == role_name)).scalar_one_or_none()
+    if not role:
+        raise HTTPException(status_code=422, detail="Select a valid existing role")
+
+    def optional_uuid(field):
+        value = body.get(field)
+        if not value:
+            return None
+        try:
+            return uuid.UUID(str(value))
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=f"Invalid {field}") from exc
+
+    state_id, division_id, district_id = (optional_uuid("state_id"), optional_uuid("division_id"), optional_uuid("district_id"))
+    for item_id, expected_level, field in ((state_id, "STATE", "state_id"), (division_id, "DIVISION", "division_id"), (district_id, "DISTRICT", "district_id")):
+        if item_id:
+            item = db.get(Jurisdiction, item_id)
+            if not item or item.level.upper() != expected_level:
+                raise HTTPException(status_code=422, detail=f"{field} must reference a {expected_level.lower()} jurisdiction")
+    if district_id and state_id:
+        district = db.get(Jurisdiction, district_id)
+        if district.parent_id != state_id:
+            raise HTTPException(status_code=422, detail="Selected district does not belong to the selected state")
+    if role_name in {"STATE_ADMIN", "STATE_ANALYST"} and not state_id:
+        raise HTTPException(status_code=422, detail="A state assignment is required for this role")
+    if role_name in {"DISTRICT_OFFICER", "DISTRICT_ANALYST"} and not district_id:
+        raise HTTPException(status_code=422, detail="A district assignment is required for this role")
+
+    organization_id = optional_uuid("organization_id")
+    if organization_id and not db.get(Organization, organization_id):
+        raise HTTPException(status_code=422, detail="Selected organization does not exist")
+    new_user = User(
+        username=username, email=email, password_hash=hash_password(str(body["password"])),
+        full_name=str(body["full_name"]).strip(), phone=str(body.get("phone") or "").strip() or None,
+        designation=str(body.get("designation") or "").strip() or None,
+        department=str(body.get("department") or "").strip() or None,
+        role_id=role.id, organization_id=organization_id, state_id=state_id,
+        division_id=division_id, district_id=district_id, is_active=True,
+    )
+    db.add(new_user)
+    db.flush()
+    audit(db, user, "OFFICIAL_USER_CREATED", "USER", new_user.id, request.state.request_id,
+          {"username": username, "role": role_name, "state_id": str(state_id) if state_id else None,
+           "district_id": str(district_id) if district_id else None})
+    db.commit()
+    return {"data": {"id": str(new_user.id), "username": new_user.username, "role": role_name},
+            "message": "Official account created successfully"}
+
+
+@router.patch("/users/{user_id}")
+def update_official_user(
+    user_id: uuid.UUID,
+    body: dict,
+    request: Request,
+    user=Depends(require_permission("USER_UPDATE")),
+    db: Session = Depends(get_db),
+):
+    _national_admin(user)
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    if target.id == user.id:
+        raise HTTPException(status_code=400, detail="Use a separate approved process to change your own administrator account")
+    allowed_fields = {"full_name", "email", "phone", "designation", "department", "role", "state_id", "division_id", "district_id", "organization_id"}
+    unknown = set(body) - allowed_fields
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unsupported fields: {', '.join(sorted(unknown))}")
+    if "role" in body:
+        role_name = str(body["role"]).strip().upper()
+        if role_name == "NATIONAL_ADMIN":
+            raise HTTPException(status_code=403, detail="National Admin assignment requires separate approval")
+        role = db.execute(select(Role).where(Role.name == role_name)).scalar_one_or_none()
+        if not role:
+            raise HTTPException(status_code=422, detail="Select a valid existing role")
+        target.role_id = role.id
+    for field, maximum in (("full_name", 180), ("phone", 30), ("designation", 120), ("department", 160)):
+        if field in body:
+            value = str(body[field] or "").strip() or None
+            if value and len(value) > maximum:
+                raise HTTPException(status_code=422, detail=f"{field} is too long")
+            setattr(target, field, value)
+    if "email" in body:
+        email = str(body["email"] or "").strip().lower() or None
+        if email and db.execute(select(User).where(User.email == email, User.id != target.id)).first():
+            raise HTTPException(status_code=409, detail="Email already belongs to another account")
+        target.email = email
+    for field in ("state_id", "division_id", "district_id", "organization_id"):
+        if field in body:
+            value = body[field]
+            try:
+                parsed = uuid.UUID(str(value)) if value else None
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=f"Invalid {field}") from exc
+            model = Organization if field == "organization_id" else Jurisdiction
+            if parsed and not db.get(model, parsed):
+                raise HTTPException(status_code=422, detail=f"Selected {field} does not exist")
+            setattr(target, field, parsed)
+    audit(db, user, "OFFICIAL_USER_UPDATED", "USER", target.id, request.state.request_id,
+          {"changed_fields": sorted(body.keys())})
+    db.commit()
+    return {"data": {"id": str(target.id), "username": target.username}, "message": "Official account updated"}
+
+
+@router.post("/users/{user_id}/reset-password")
+def reset_official_password(
+    user_id: uuid.UUID,
+    body: dict,
+    request: Request,
+    user=Depends(require_permission("USER_UPDATE")),
+    db: Session = Depends(get_db),
+):
+    _national_admin(user)
+    target = db.get(User, user_id)
+    if not target:
+        raise HTTPException(status_code=404, detail="User not found")
+    password = str(body.get("temporary_password") or "")
+    if len(password) < 12:
+        raise HTTPException(status_code=422, detail="Temporary password must contain at least 12 characters")
+    target.password_hash = hash_password(password)
+    audit(db, user, "OFFICIAL_USER_PASSWORD_RESET", "USER", target.id, request.state.request_id,
+          {"username": target.username})
+    db.commit()
+    return {"data": {"id": str(target.id)}, "message": "Temporary password updated"}
 
 
 @router.put("/roles/{role_id}/permissions")
