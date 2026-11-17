@@ -13,6 +13,21 @@ def init_db():
     import app.models.identity_verification
     Base.metadata.create_all(bind=engine)
 
+    # Lightweight additive migration for official user profile fields. Safe to rerun.
+    from sqlalchemy import inspect, text
+    inspector = inspect(engine)
+    user_columns = {column["name"] for column in inspector.get_columns("users")}
+    profile_columns = {
+        "full_name": "VARCHAR(180)",
+        "phone": "VARCHAR(30)",
+        "designation": "VARCHAR(120)",
+        "department": "VARCHAR(160)",
+    }
+    with engine.begin() as connection:
+        for column_name, column_type in profile_columns.items():
+            if column_name not in user_columns:
+                connection.execute(text(f"ALTER TABLE users ADD COLUMN {column_name} {column_type}"))
+
     # Keep the permission catalogue synchronized when new RBAC capabilities ship.
     from app.core.permissions import Permission as PermissionCode
     from app.models.permission import Permission
