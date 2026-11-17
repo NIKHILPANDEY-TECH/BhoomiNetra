@@ -157,3 +157,20 @@ The root directory must match the actual repository folder casing.
 ## Security
 
 Keep secrets in environment variables. Never commit `.env`, passwords, JWT secrets, database credentials, or API keys. Use HTTPS and restrict CORS to trusted frontend origins.
+
+
+## National Admin access control
+
+The National Admin dashboard now includes `/access-control` for managing the role-permission matrix, enabling/disabling accounts, and reviewing optional identity submissions. The backend enforces every permission; frontend navigation visibility is only a usability layer.
+
+### Identity document security configuration
+
+Identity uploads are intentionally disabled until `IDENTITY_ENCRYPTION_KEY` is set. Generate a Fernet key with:
+
+```bash
+python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+```
+
+Set the generated value as `IDENTITY_ENCRYPTION_KEY` in the backend deployment environment. Keep it secret and backed up securely. If the key is lost or changed, previously stored documents cannot be decrypted. The API accepts PDF/JPEG/PNG up to 5 MB and encrypts the file before storing it in the database. Do not request Aadhaar by default; prefer official employee credentials and collect only what policy requires. Establish a retention/deletion policy and encrypted database backups before production use.
+
+The identity table is created by the existing `init_db()` metadata bootstrap. Deploy the backend changes before using the new frontend page.
