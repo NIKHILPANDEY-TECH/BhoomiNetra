@@ -25,7 +25,7 @@ import GIS from "./pages/gis.jsx"
 import Alerts from "./pages/alerts.jsx"
 import Reports from "./pages/reports.jsx"
 import Analytics from "./pages/analytics.jsx"
-import AuditLogs from "./pages/audit-logs.jsx"
+import AuditLogs from "./pages/audit-logs.jsx"\nimport AccessControl from "./pages/AccessControl.jsx"
 import Settings from "./pages/settings.jsx"
 import Help from "./pages/help.jsx"
 import HighRisk from "./pages/high-risk.jsx"
@@ -299,6 +299,15 @@ createRoot(
               element={
                 <AdminOnly>
                   <AuditLogs />
+                </AdminOnly>
+              }
+            />
+
+            <Route
+              path="access-control"
+              element={
+                <AdminOnly>
+                  <AccessControl />
                 </AdminOnly>
               }
             />

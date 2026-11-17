@@ -244,6 +244,7 @@ export default function App() {
         "/analytics",
         "/reports",
         "/audit-logs",
+        "/access-control",
       ]
     : ["/risk-analysis", "/stage-prediction", "/what-if", "/reports"]
   ).map((path) => ({
@@ -390,6 +391,12 @@ export default function App() {
           ) : isAdmin && (
             <NavLink to="/gis" active={location.pathname === "/gis"}>
               GIS
+            </NavLink>
+          )}
+
+          {isAdmin && (
+            <NavLink to="/access-control" active={location.pathname === "/access-control"}>
+              Access Control
             </NavLink>
           )}
 
