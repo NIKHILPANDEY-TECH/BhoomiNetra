@@ -12,3 +12,5 @@ from .alert import Alert
 from .audit_log import AuditLog
 
 from .citizen_report import CitizenReport
+
+from .identity_verification import IdentityVerification
